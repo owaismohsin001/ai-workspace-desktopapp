@@ -3,6 +3,9 @@
 const { app, BrowserWindow, ipcMain, Menu, shell, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { TabManager } = require('./tab-manager');
+const mcpServer = require('./mcp-server');
+const { TunnelManager } = require('./tunnel-manager');
 
 const DBG = path.join(__dirname, 'debug.log');
 const dbg = (...args) => fs.appendFileSync(DBG, `[${new Date().toISOString()}] ${args.join(' ')}\n`);
@@ -83,10 +86,53 @@ if (!gotLock) {
   process.exit(0);
 }
 
+// ── Remote debugging port (Phase 0: Playwright MCP prep) ───────────────────
+// Opt-in CDP endpoint used to enumerate top-level page targets (baseline
+// /json/list) and, in later phases, drive WebContentsView tabs through
+// playwright-core's connectOverCDP. Off unless AIIDE_CDP_PORT is set, and
+// bound to 127.0.0.1 so the port is never reachable off-box.
+const cdpPort = Number.parseInt(process.env.AIIDE_CDP_PORT ?? '', 10);
+if (Number.isFinite(cdpPort) && cdpPort > 0 && cdpPort < 65536) {
+  app.commandLine.appendSwitch('remote-debugging-port', String(cdpPort));
+  app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
+  dbg('remote-debugging-port enabled on 127.0.0.1:' + cdpPort);
+}
+
+// ── Playwright MCP server (Phase 3) ────────────────────────────────────
+// Off unless AIIDE_MCP_PORT is set. Requires AIIDE_CDP_PORT to be set too —
+// the MCP server attaches to our own CDP endpoint via connectOverCDP.
+// Bound to 127.0.0.1 only. Started after `app.whenReady()` because
+// @playwright/mcp lazily loads playwright-core, which expects to be in a
+// real Node event loop with no Electron startup races.
+const mcpPort = Number.parseInt(process.env.AIIDE_MCP_PORT ?? '', 10);
+const mcpEnabled = Number.isFinite(mcpPort) && mcpPort > 0 && mcpPort < 65536;
+
 // â”€â”€ Window handles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 let mainWindow = null;
 let connectWindow = null;
+
+// One TabManager for the app lifetime. The owner window can come and go
+// (sign-out → reconnect creates a new BrowserWindow); rebindToWindow() keeps
+// the existing WebContentsView children attached to whichever window is live.
+const tabManager = new TabManager(() => mainWindow, dbg);
+
+// Phase 6 — automated reverse SSH tunnel to the user's EC2 workspace.
+// Started after a successful sign-in (deep link or restored config),
+// stopped on sign-out / app quit. Token + platformUrl are read from
+// config.json; refreshes get written back via setToken.
+const tunnelManager = new TunnelManager({
+  getToken: () => readConfig().desktopToken ?? null,
+  setToken: (t) => writeConfig({ desktopToken: t }),
+  getPlatformUrl: () => readConfig().platformUrl ?? PLATFORM_URL,
+  dbg,
+});
+tunnelManager.on('status', (s) => {
+  dbg(`tunnel-manager status=${s.status} ${s.error ? '(' + s.error + ')' : ''}`);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('tunnel:status', s);
+  }
+});
 
 // â”€â”€ Connect window â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -133,11 +179,22 @@ function createMainWindow(workspaceUrl) {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      // Required for <webview> tags used in the workspace preview pane.
-      webviewTag: true,
     },
     title: 'AI IDE Studio',
     show: false,
+  });
+
+  // Phase 1.2 — orphan-view guard. Every full-page navigation in the
+  // renderer (F5, Playwright reload, deep-link re-sign-in, programmatic
+  // location change) tears down the React tree and re-runs tab.open with
+  // fresh tabIds, leaving the previous views orphaned at stale bounds
+  // (visually they cover the tab strip and toolbar). Destroy everything
+  // on every real navigation. isSameDocument filters out SPA route
+  // changes inside the workspace shell — those keep their views.
+  // Attached before loadURL so it catches the initial nav too; the initial
+  // call is a harmless no-op because the registry is empty.
+  mainWindow.webContents.on('did-start-navigation', (_e, _url, isSameDocument, isMainFrame) => {
+    if (isMainFrame && !isSameDocument) tabManager.destroyAll();
   });
 
   mainWindow.loadURL(workspaceUrl);
@@ -199,20 +256,12 @@ function createMainWindow(workspaceUrl) {
     newWin.webContents.once('did-navigate', (e, url) => route(null, url));
   });
 
-  // Inject a preload into every <webview> that patches window.open at the JS
-  // level. This is the only reliable way to intercept popup requests from
-  // webview content without the allowpopups HTML attribute — Chromium blocks
-  // them before any main-process handler can see them.
-  // contextIsolation: false lets the preload's window.open patch reach the
-  // page's actual window object.
-  mainWindow.webContents.on('will-attach-webview', (event, webPreferences) => {
-    dbg('will-attach-webview fired');
-    webPreferences.preload = path.join(__dirname, 'preload-webview.js');
-    // Leave contextIsolation at its default (true). The preload uses
-    // contextBridge + DOM script injection to reach the page's window.open.
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    // Sign-out → reconnect creates a fresh window/renderer; any surviving
+    // views would orphan into the new session. Tear them down.
+    tabManager.destroyAll();
   });
-
-  mainWindow.on('closed', () => { mainWindow = null; });
   buildAppMenu();
 }
 
@@ -230,12 +279,28 @@ function handleDeepLink(url) {
   const workspaceUrl = parsed.searchParams.get('url');
   if (!workspaceUrl || !workspaceUrl.startsWith('http')) return;
 
-  writeConfig({ workspaceUrl, connectedAt: new Date().toISOString() });
+  // Phase 6 — capture the desktop bearer token + platform URL the
+  // landing page minted. Both are optional in the deep link so legacy
+  // /desktop/auth pages (without the Phase 6 patch) still work — they
+  // just can't drive the automated tunnel.
+  const desktopToken = parsed.searchParams.get('token') ?? undefined;
+  const platformUrl = parsed.searchParams.get('platformUrl') ?? undefined;
+
+  writeConfig({
+    workspaceUrl,
+    connectedAt: new Date().toISOString(),
+    ...(desktopToken ? { desktopToken } : {}),
+    ...(platformUrl ? { platformUrl } : {}),
+  });
 
   if (connectWindow) {
     connectWindow.close();   // triggers the 'closed' handler which nulls it
   }
   createMainWindow(workspaceUrl);
+  // Kick off the tunnel if we have everything we need.
+  if (desktopToken || readConfig().desktopToken) {
+    tunnelManager.start();
+  }
 }
 
 // â”€â”€ Application menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -249,6 +314,11 @@ function buildAppMenu() {
           label: 'Disconnect Workspace',
           accelerator: process.platform === 'darwin' ? 'Cmd+Shift+D' : 'Ctrl+Shift+D',
           click() {
+            // Phase 6 — kill the tunnel + drop the bearer token before we
+            // wipe the workspace URL. Otherwise the next launch would try
+            // to spin a tunnel against the prior user's EC2 with their
+            // (no-longer-valid) token.
+            void tunnelManager.stop();
             clearConfig();
             if (mainWindow) { mainWindow.close(); }
             createConnectWindow();
@@ -299,42 +369,6 @@ function buildAppMenu() {
 }
 
 // â”€â”€ IPC handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-// Webview popup policy.
-//
-// WITHOUT allowpopups, Chromium blocks window.open() inside a <webview> BEFORE
-// it reaches any setWindowOpenHandler — the handler is never called.
-// will-attach-webview fires before each webview is created and lets us force
-// allowpopups on from the main process, so the frontend HTML doesn't need to
-// change. web-contents-created then sets the open-handler so the resulting
-// popup becomes a real Electron BrowserWindow (not a dangling guest view).
-
-app.on('web-contents-created', (event, contents) => {
-  if (contents.getType() === 'webview') {
-    contents.setWindowOpenHandler(({ url }) => {
-      if (/^(about|chrome|devtools):/.test(url)) {
-        return { action: 'deny' };
-      }
-      return { action: 'allow' };
-    });
-  }
-});
-
-// Popup opened from inside a <webview> (Stripe checkout, OAuth, etc.).
-// preload-webview.js intercepts window.open() and routes it here.
-ipcMain.handle('webview-popup-open', (event, { url }) => {
-  dbg('webview-popup-open called url=' + url);
-  if (!url || /^(about|chrome|devtools):/.test(url)) return;
-  const popup = new BrowserWindow({
-    width: 560,
-    height: 780,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
-  });
-  popup.loadURL(url);
-});
 
 // Connect window: "Sign in with Platform" button opens the platform's
 // /desktop/auth page in the system browser.
@@ -406,9 +440,13 @@ app.whenReady().then(() => {
     return;
   }
 
-  const { workspaceUrl } = readConfig();
+  const { workspaceUrl, desktopToken } = readConfig();
   if (workspaceUrl) {
     createMainWindow(workspaceUrl);
+    // Phase 6 — restored session: re-open the tunnel automatically. If the
+    // token has expired the manager will emit a `token-expired` event and
+    // fall idle until the user re-signs-in.
+    if (desktopToken) tunnelManager.start();
   } else {
     createConnectWindow();
   }
@@ -420,9 +458,21 @@ app.whenReady().then(() => {
       else createConnectWindow();
     }
   });
+
+  // Phase 3 — start the Playwright MCP server once the window/views machinery
+  // is set up. Failure is logged but non-fatal: the workspace still works
+  // without the MCP endpoint.
+  if (mcpEnabled) {
+    mcpServer.start({ mcpPort, cdpPort, dbg })
+      .catch((err) => dbg('mcp-server start failed: ' + (err?.stack ?? err)));
+  }
 });
 
-app.on('window-all-closed', () => {
+app.on('window-all-closed', async () => {
+  // Drop every WebContentsView so we don't leak page targets past shutdown.
+  tabManager.destroyAll();
+  await tunnelManager.stop().catch(() => {});
+  if (mcpEnabled) await mcpServer.stop({ dbg }).catch(() => {});
   if (process.platform !== 'darwin') app.quit();
 });
 

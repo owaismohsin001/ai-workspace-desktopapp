@@ -14,7 +14,8 @@
   "devDependencies": {
     "cross-env": "^7.0.3",
     "electron": "^33.0.0",
-    "electron-builder": "^25.0.0"
+    "electron-builder": "^25.0.0",
+    "playwright-core": "^1.60.0"
   },
   "build": {
     "appId": "com.aiide.studio",
@@ -22,31 +23,47 @@
     "files": [
       "main.js",
       "start.js",
+      "tab-manager.js",
+      "mcp-server.js",
+      "tunnel-manager.js",
       "preload.js",
       "preload-connect.js",
-      "preload-webview.js",
+      "preload-tab.js",
       "connect.html",
       "assets/**"
     ],
     "protocols": [
       {
         "name": "AI IDE Studio",
-        "schemes": ["aiide"]
+        "schemes": [
+          "aiide"
+        ]
       }
     ],
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "icon": "assets/icon.ico"
     },
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "icon": "assets/icon.icns",
       "category": "public.app-category.developer-tools"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "icon": "assets/icon.png",
       "category": "Development"
     }
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@playwright/mcp": "^0.0.75"
   }
 }
