@@ -111,10 +111,13 @@ class TabManager {
         additionalArguments: [`--ai-ide-tab-id=${tabId}`],
       },
     });
-    // Hidden until the renderer reports its first bounds — avoids a flash of
-    // unstyled content in the top-left corner before layout settles.
+    // Hidden until the renderer makes it the active tab — avoids a flash
+    // of unstyled content in the top-left corner before layout settles.
+    // Bounds default to the editor-body rect from the most recent
+    // setBounds (or 0×0 on cold start), so MCP screenshots on inactive
+    // tabs work without having to be made active first.
     view.setVisible(false);
-    view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+    view.setBounds(this.defaultBounds ?? { x: 0, y: 0, width: 0, height: 0 });
 
     const wc = view.webContents;
     this._wireEvents(tabId, view);
@@ -196,16 +199,26 @@ class TabManager {
   }
 
   _setBounds(tabId, rect) {
-    const entry = this.tabs.get(tabId);
-    if (!entry || !rect) return;
+    if (!rect) return;
     const norm = {
       x: Math.max(0, Math.round(rect.x)),
       y: Math.max(0, Math.round(rect.y)),
       width: Math.max(0, Math.round(rect.width)),
       height: Math.max(0, Math.round(rect.height)),
     };
-    entry.lastBounds = norm;
-    entry.view.setBounds(norm);
+    // Apply to the named tab AND every other tab. All tabs live in the
+    // same editor-body area; only visibility differs. Mirroring bounds is
+    // what lets Playwright MCP screenshots succeed against tabs that the
+    // user has never had active — without it, those views sit at 0×0 and
+    // captureScreenshot fails with "Cannot take screenshot with 0 width".
+    for (const [otherId, other] of this.tabs) {
+      other.lastBounds = norm;
+      other.view.setBounds(norm);
+      void otherId;
+    }
+    // Cache for new tabs created later (so they don't open at 0×0 either).
+    this.defaultBounds = norm;
+    void tabId;
   }
 
   _setActive(tabId) {

@@ -65,8 +65,19 @@ contextBridge.exposeInMainWorld('__AIIDE__', {
     /** Subscribe to status updates. Callback receives
      *  `{ status, error, connectedAt }` where status is one of:
      *  'idle' | 'granting' | 'connecting' | 'connected' | 'reconnecting' | 'error'.
-     *  Returns an unsubscribe function. */
-    onStatus: (cb) => subscribe(tunnelStatusListeners, cb),
+     *  Returns an unsubscribe function.
+     *
+     *  The callback also fires once immediately with the CURRENT status
+     *  (fetched from main via IPC) — important because the React tree
+     *  often mounts after the tunnel has already reached `connected`,
+     *  so the first push event would otherwise be missed and the dot
+     *  would stay grey forever. */
+    onStatus: (cb) => {
+      ipcRenderer.invoke('tunnel:getStatus').then((current) => {
+        if (current) { try { cb(current); } catch {} }
+      }).catch(() => { /* main not ready yet */ });
+      return subscribe(tunnelStatusListeners, cb);
+    },
   },
 });
 
