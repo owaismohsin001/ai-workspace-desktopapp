@@ -87,11 +87,11 @@ if (!gotLock) {
 }
 
 // ── Remote debugging port (Phase 0: Playwright MCP prep) ───────────────────
-// Opt-in CDP endpoint used to enumerate top-level page targets (baseline
-// /json/list) and, in later phases, drive WebContentsView tabs through
-// playwright-core's connectOverCDP. Off unless AIIDE_CDP_PORT is set, and
-// bound to 127.0.0.1 so the port is never reachable off-box.
-const cdpPort = Number.parseInt(process.env.AIIDE_CDP_PORT ?? '', 10);
+// CDP endpoint used to enumerate top-level page targets and drive
+// WebContentsView tabs through playwright-core's connectOverCDP. ON by
+// default at 9222; set AIIDE_CDP_PORT to override or to 0 to disable.
+// Bound to 127.0.0.1 so the port is never reachable off-box.
+const cdpPort = Number.parseInt(process.env.AIIDE_CDP_PORT ?? '9222', 10);
 if (Number.isFinite(cdpPort) && cdpPort > 0 && cdpPort < 65536) {
   app.commandLine.appendSwitch('remote-debugging-port', String(cdpPort));
   app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
@@ -99,12 +99,13 @@ if (Number.isFinite(cdpPort) && cdpPort > 0 && cdpPort < 65536) {
 }
 
 // ── Playwright MCP server (Phase 3) ────────────────────────────────────
-// Off unless AIIDE_MCP_PORT is set. Requires AIIDE_CDP_PORT to be set too —
-// the MCP server attaches to our own CDP endpoint via connectOverCDP.
-// Bound to 127.0.0.1 only. Started after `app.whenReady()` because
-// @playwright/mcp lazily loads playwright-core, which expects to be in a
-// real Node event loop with no Electron startup races.
-const mcpPort = Number.parseInt(process.env.AIIDE_MCP_PORT ?? '', 10);
+// ON by default at 9090; set AIIDE_MCP_PORT to override or to 0 to disable.
+// Requires CDP to be enabled (defaulted above) — the MCP server attaches
+// to our own CDP endpoint via connectOverCDP. Bound to 127.0.0.1 only.
+// Started after `app.whenReady()` because @playwright/mcp lazily loads
+// playwright-core, which expects to be in a real Node event loop with no
+// Electron startup races.
+const mcpPort = Number.parseInt(process.env.AIIDE_MCP_PORT ?? '9090', 10);
 const mcpEnabled = Number.isFinite(mcpPort) && mcpPort > 0 && mcpPort < 65536;
 
 // â”€â”€ Window handles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
