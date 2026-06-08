@@ -156,7 +156,9 @@ function createConnectWindow() {
   });
 
   connectWindow.loadFile(path.join(__dirname, 'connect.html'));
-  connectWindow.once('ready-to-show', () => connectWindow.show());
+  const showConnect = () => { if (connectWindow && !connectWindow.isDestroyed()) connectWindow.show(); };
+  connectWindow.once('ready-to-show', showConnect);
+  setTimeout(showConnect, 3000);
   connectWindow.on('closed', () => { connectWindow = null; });
   // No application menu on the connect window â€” it's a modal-style dialog.
   connectWindow.setMenu(null);
@@ -200,7 +202,9 @@ function createMainWindow(workspaceUrl) {
   });
 
   mainWindow.loadURL(workspaceUrl);
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  const showMain = () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show(); };
+  mainWindow.once('ready-to-show', showMain);
+  setTimeout(showMain, 3000);
 
   // Desktop-app window-open policy:
   //   Internal URLs (about:, chrome:, devtools:) → drop silently.
