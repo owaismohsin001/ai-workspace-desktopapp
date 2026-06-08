@@ -3,12 +3,99 @@
 const { app, BrowserWindow, ipcMain, Menu, shell, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { TabManager } = require('./tab-manager');
+const { TabManager, TAB_SCROLLBAR_CSS } = require('./tab-manager');
 const mcpServer = require('./mcp-server');
 const { TunnelManager } = require('./tunnel-manager');
 
 const DBG = path.join(__dirname, 'debug.log');
 const dbg = (...args) => fs.appendFileSync(DBG, `[${new Date().toISOString()}] ${args.join(' ')}\n`);
+
+// App icon shown in the taskbar / window chrome (dev + packaged). Windows
+// prefers the .ico; everywhere else the PNG renders fine.
+const APP_ICON = path.join(
+  __dirname,
+  'assets',
+  process.platform === 'win32' ? 'icon.ico' : 'icon.png'
+);
+
+// Pro tab-strip + toolbar restyle, injected into the (remotely-served)
+// workspace UI from the desktop shell so it applies without a frontend
+// redeploy. Uses !important to win over the shipped globals.css. Mirrors the
+// source-of-truth rules in frontend/src/app/globals.css. The active tab and
+// the selected toolbar tool both adopt the AI-bot accent (var(--bot-accent),
+// defined on :root by the app); a sparkle marks the active tab's left edge;
+// the close (×) shows on hover only; the + button gets a modern hover.
+// AI-bot mascot head (antenna + rounded head + two eye holes via evenodd) —
+// matches MiniBot. Used as the active-tab left-edge marker.
+const BOT_HEAD_MASK =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' fill-rule='evenodd' d='M8 6H16a4 4 0 0 1 4 4V15a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V10a4 4 0 0 1 4-4ZM10.5 2.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0ZM11.3 4H12.7V6H11.3ZM7.6 12a1.7 1.7 0 1 0 3.4 0a1.7 1.7 0 1 0-3.4 0ZM13 12a1.7 1.7 0 1 0 3.4 0a1.7 1.7 0 1 0-3.4 0Z'/%3E%3C/svg%3E\") center / contain no-repeat";
+const CHROME_THEME_CSS = `
+  .editor-tab {
+    gap: 7px !important;
+    padding: 0 8px 0 12px !important;
+    transition: background 140ms ease, color 140ms ease !important;
+  }
+  .editor-tab:not(.active):hover {
+    background: var(--vsc-hover) !important;
+    color: var(--vsc-text) !important;
+  }
+  .editor-tab.active {
+    background: linear-gradient(180deg,
+      color-mix(in srgb, var(--bot-accent) 26%, var(--vsc-bg)),
+      color-mix(in srgb, var(--bot-accent) 12%, var(--vsc-bg))) !important;
+    color: var(--vsc-text-emphasis) !important;
+    box-shadow:
+      inset 0 2px 0 var(--bot-accent),
+      inset 1px 0 0 color-mix(in srgb, var(--bot-accent) 40%, var(--vsc-border-strong)),
+      inset -1px 0 0 color-mix(in srgb, var(--bot-accent) 40%, var(--vsc-border-strong)) !important;
+  }
+  .editor-tab.active::before {
+    content: "" !important;
+    flex: 0 0 auto !important;
+    width: 14px !important;
+    height: 14px !important;
+    background-color: var(--bot-accent) !important;
+    -webkit-mask: ${BOT_HEAD_MASK} !important;
+    mask: ${BOT_HEAD_MASK} !important;
+    filter: drop-shadow(0 0 3px var(--bot-accent-glow)) !important;
+  }
+  .editor-tab:hover .tab-close,
+  .editor-tab:focus-within .tab-close { opacity: 1 !important; }
+  .editor-tab.active .tab-close { opacity: 0 !important; }
+  .editor-tab.active:hover .tab-close,
+  .editor-tab.active:focus-within .tab-close { opacity: 1 !important; }
+  .tab-close:hover {
+    background: color-mix(in srgb, var(--vsc-error) 22%, transparent) !important;
+    color: var(--vsc-error) !important;
+  }
+  .tab-add {
+    width: 28px !important;
+    height: 28px !important;
+    margin: 0 4px !important;
+    align-self: center !important;
+    border-radius: 7px !important;
+    font-size: 18px !important;
+    line-height: 1 !important;
+    color: var(--vsc-text-muted) !important;
+    transition: background 140ms ease, color 140ms ease, transform 140ms ease !important;
+  }
+  .tab-add svg { width: 15px !important; height: 15px !important; }
+  .tab-add:hover {
+    background: var(--bot-accent-soft) !important;
+    color: var(--bot-accent) !important;
+    transform: scale(1.08) !important;
+  }
+  .tab-add:active { transform: scale(0.94) !important; }
+  .overlay-toolbar-btn.active {
+    background: var(--bot-accent-soft) !important;
+    color: var(--bot-accent) !important;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bot-accent) 55%, transparent) !important;
+  }
+  .overlay-toolbar-btn.active:hover {
+    background: color-mix(in srgb, var(--bot-accent) 32%, transparent) !important;
+    color: var(--vsc-text-emphasis) !important;
+  }
+`;
 
 // Hosts that actively detect + refuse iframe embedding (payment, OAuth, banks).
 // These open in their own BrowserWindow instead of a workspace tab.
@@ -63,12 +150,27 @@ function clearConfig() {
 // instance is spawned with the URL as a CLI argument (handled below).
 
 if (process.defaultApp) {
-  // Running as "electron ." (dev mode) â€” bind to the current script path
-  // so the protocol works without a packaged binary.
-  if (process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient('aiide', process.execPath, [
-      path.resolve(process.argv[1]),
-    ]);
+  // Dev mode: register via node + start.js so ELECTRON_RUN_AS_NODE is
+  // stripped before Electron starts. Registering electron.exe directly
+  // inherits the VS Code / Claude Code shell env where
+  // ELECTRON_RUN_AS_NODE=1, which puts Electron in Node.js mode and
+  // silently breaks the second-instance deep-link handoff.
+  const nodeExe = process.env.LOCALAPPDATA
+    ? path.join(process.env.LOCALAPPDATA, '..', 'Programs', 'nodejs', 'node.exe')
+    : null;
+  const startScript = path.join(__dirname, 'start.js');
+  // Prefer the node.exe that's already in PATH (most reliable).
+  const nodeBin = (() => {
+    try {
+      const { execSync } = require('child_process');
+      const out = execSync('where node', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      return out.split('\n')[0].trim();
+    } catch {
+      return nodeExe;
+    }
+  })();
+  if (nodeBin) {
+    app.setAsDefaultProtocolClient('aiide', nodeBin, [startScript]);
   }
 } else {
   app.setAsDefaultProtocolClient('aiide');
@@ -151,7 +253,8 @@ function createConnectWindow() {
       nodeIntegration: false,
       contextIsolation: true,
     },
-    title: 'AI IDE Studio â€” Connect',
+    title: 'AI Workspace — Connect',
+    icon: APP_ICON,
     show: false,
   });
 
@@ -184,7 +287,8 @@ function createMainWindow(workspaceUrl) {
       nodeIntegration: false,
       contextIsolation: true,
     },
-    title: 'AI IDE Studio',
+    title: 'AI Workspace',
+    icon: APP_ICON,
     show: false,
   });
 
@@ -199,6 +303,22 @@ function createMainWindow(workspaceUrl) {
   // call is a harmless no-op because the registry is empty.
   mainWindow.webContents.on('did-start-navigation', (_e, _url, isSameDocument, isMainFrame) => {
     if (isMainFrame && !isSameDocument) tabManager.destroyAll();
+  });
+
+  // Force our chrome theme onto the remotely-served workspace UI: themed
+  // scrollbars + the pro tab-strip/toolbar restyle (AI-bot accent on the
+  // active tab & selected tool, hover-only close, modern + button). Done
+  // from the shell so it lands immediately without redeploying the frontend.
+  // Re-applied on every DOM load because insertCSS only sticks per-document.
+  mainWindow.webContents.on('dom-ready', () => {
+    const wc = mainWindow?.webContents;
+    if (!wc) return;
+    wc.insertCSS(TAB_SCROLLBAR_CSS).catch((err) =>
+      dbg('insertCSS main scrollbar failed: ' + err.message)
+    );
+    wc.insertCSS(CHROME_THEME_CSS).catch((err) =>
+      dbg('insertCSS chrome theme failed: ' + err.message)
+    );
   });
 
   mainWindow.loadURL(workspaceUrl);

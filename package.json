@@ -1,7 +1,7 @@
 {
   "name": "ai-ide-desktop",
   "version": "1.0.0",
-  "description": "AI IDE Studio – Desktop",
+  "description": "AI Workspace – Desktop",
   "main": "main.js",
   "scripts": {
     "start": "node start.js",
@@ -19,7 +19,7 @@
   },
   "build": {
     "appId": "com.aiide.studio",
-    "productName": "AI IDE Studio",
+    "productName": "AI Workspace",
     "files": [
       "main.js",
       "start.js",
@@ -34,7 +34,7 @@
     ],
     "protocols": [
       {
-        "name": "AI IDE Studio",
+        "name": "AI Workspace",
         "schemes": [
           "aiide"
         ]
@@ -50,7 +50,7 @@
       "target": [
         "dmg"
       ],
-      "icon": "assets/icon.icns",
+      "icon": "assets/icon.png",
       "category": "public.app-category.developer-tools"
     },
     "linux": {

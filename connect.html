@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'" />
-  <title>Connect — AI IDE Studio</title>
+  <title>Connect — AI Workspace</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -62,7 +62,8 @@
       gap: 10px;
       margin-bottom: 28px;
     }
-    .logo-icon { font-size: 26px; color: var(--accent); }
+    .logo-icon { display: inline-flex; align-items: center; line-height: 0; }
+    .logo-icon svg { width: 28px; height: 28px; display: block; }
     .logo-text { font-size: 17px; font-weight: 700; letter-spacing: 0.02em; }
 
     /* ── Headings / text ── */
@@ -179,8 +180,30 @@
 <body>
   <div class="card">
     <div class="logo">
-      <span class="logo-icon">⬡</span>
-      <span class="logo-text">AI IDE Studio</span>
+      <span class="logo-icon" aria-hidden>
+        <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="botBody" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#6D28D9" />
+              <stop offset="1" stop-color="#4C1D95" />
+            </linearGradient>
+          </defs>
+          <!-- antenna -->
+          <rect x="31" y="5" width="2" height="10" rx="1" fill="#a78bfa" />
+          <circle cx="32" cy="4" r="3.5" fill="#c4b5fd" />
+          <!-- ears -->
+          <rect x="8" y="24" width="6" height="18" rx="2.5" fill="#4C1D95" />
+          <rect x="50" y="24" width="6" height="18" rx="2.5" fill="#4C1D95" />
+          <!-- head -->
+          <rect x="13" y="14" width="38" height="38" rx="10" fill="url(#botBody)" />
+          <!-- eyes -->
+          <circle cx="25" cy="33" r="5" fill="#FFF6C9" />
+          <circle cx="39" cy="33" r="5" fill="#FFF6C9" />
+          <circle cx="25" cy="33" r="2.2" fill="#4C1D95" />
+          <circle cx="39" cy="33" r="2.2" fill="#4C1D95" />
+        </svg>
+      </span>
+      <span class="logo-text">AI Workspace</span>
     </div>
 
     <h1>Connect Your Workspace</h1>

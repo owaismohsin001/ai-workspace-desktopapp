@@ -9,6 +9,23 @@
 const { BrowserWindow, WebContentsView, ipcMain } = require('electron');
 const path = require('path');
 
+// Dark, theme-matched scrollbar injected into every tab's content so the
+// preview pane's bar matches the chat panel's (same palette as the app's
+// globals.css). !important overrides whatever the loaded site ships.
+const TAB_SCROLLBAR_CSS = `
+  *::-webkit-scrollbar { width: 10px !important; height: 10px !important; }
+  *::-webkit-scrollbar-track { background: transparent !important; }
+  *::-webkit-scrollbar-thumb {
+    background: #424242 !important;
+    border-radius: 5px !important;
+    border: 2px solid transparent !important;
+    background-clip: padding-box !important;
+  }
+  *::-webkit-scrollbar-thumb:hover { background: #4e4e4e !important; }
+  *::-webkit-scrollbar-corner { background: transparent !important; }
+  html { scrollbar-width: thin !important; scrollbar-color: #424242 transparent !important; }
+`;
+
 // Hosts that actively detect + refuse iframe embedding (payment, OAuth, banks).
 // Preserved from the pre-migration popup policy in main.js — these still get
 // their own BrowserWindow when a tab's window.open() targets them.
@@ -261,6 +278,17 @@ class TabManager {
       if (owner && !owner.isDestroyed()) owner.webContents.send(channel, payload);
     };
 
+    // Repaint each tab's native scrollbars to match the app's dark theme so
+    // the preview pane's scrollbar lines up with the chat panel's instead of
+    // showing the OS default light bar. Re-applied on every DOM load because
+    // insertCSS only sticks to the current document.
+    const applyScrollbarTheme = () => {
+      wc.insertCSS(TAB_SCROLLBAR_CSS).catch((err) =>
+        this.dbg(`insertCSS scrollbar failed tabId=${tabId} err=${err.message}`)
+      );
+    };
+    wc.on('dom-ready', applyScrollbarTheme);
+
     wc.on('did-start-loading', () => send('tab:loading-change', { tabId, loading: true }));
     wc.on('did-stop-loading', () => send('tab:loading-change', { tabId, loading: false }));
     wc.on('page-title-updated', (_e, title) => send('tab:title-change', { tabId, title }));
@@ -274,4 +302,4 @@ class TabManager {
   }
 }
 
-module.exports = { TabManager };
+module.exports = { TabManager, TAB_SCROLLBAR_CSS };

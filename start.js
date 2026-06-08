@@ -16,8 +16,9 @@ const electronBin = require('electron');
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 
-const child = spawn(electronBin, ['.'], {
+const child = spawn(electronBin, [__dirname, ...process.argv.slice(2)], {
   stdio: 'inherit',
+  cwd: __dirname,
   env,
   windowsHide: false,
 });

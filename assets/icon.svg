@@ -1,0 +1,25 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="botBody" x1="78" y1="128" x2="434" y2="468" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7C3AED" />
+      <stop offset="1" stop-color="#4C1D95" />
+    </linearGradient>
+  </defs>
+
+  <!-- ears (behind the head) -->
+  <rect x="44" y="223" width="40" height="150" rx="18" fill="#4C1D95" />
+  <rect x="428" y="223" width="40" height="150" rx="18" fill="#4C1D95" />
+
+  <!-- antenna -->
+  <rect x="248" y="70" width="16" height="60" rx="8" fill="#a78bfa" />
+  <circle cx="256" cy="58" r="30" fill="#c4b5fd" />
+
+  <!-- head -->
+  <rect x="78" y="128" width="356" height="340" rx="88" fill="url(#botBody)" />
+
+  <!-- eyes -->
+  <circle cx="196" cy="300" r="52" fill="#FFF6C9" />
+  <circle cx="316" cy="300" r="52" fill="#FFF6C9" />
+  <circle cx="196" cy="300" r="23" fill="#4C1D95" />
+  <circle cx="316" cy="300" r="23" fill="#4C1D95" />
+</svg>
