@@ -42,6 +42,8 @@ const CAPTURED_PROPS = [
   'backgroundColor',
   'borderTopWidth', 'borderStyle', 'borderColor', 'borderRadius',
   'boxShadow', 'opacity',
+  // SVG / icon paint — icons set colour via fill/stroke, not `color`.
+  'fill', 'stroke',
 ];
 
 // The agent body. Stringified and injected — it must NOT close over anything
@@ -180,6 +182,9 @@ function AGENT_BODY(CAPTURED_PROPS) {
   }
   window.addEventListener('scroll', schedule, true);
   window.addEventListener('resize', schedule, true);
+  // After a reload the new DOM may settle after restore() runs — reposition
+  // (and re-localize) once it finishes loading.
+  window.addEventListener('load', schedule);
 
   // ── computed-style capture ──────────────────────────────────────────────
   function capture(el) {
@@ -235,13 +240,20 @@ function AGENT_BODY(CAPTURED_PROPS) {
       var fp = fingerprint(el);
       pins.set(n, { el: el, badge: vis.badge, box: vis.box, detached: false, n: n, path: fp.path });
       position(n);
+      // Editable when the element OWNS visible text directly (a non-whitespace
+      // text node child) — true for <p>Hello <a>x</a></p> and <button>Go</button>
+      // alike, not just elements with zero children. Editing sets textContent
+      // (live preview may flatten inline markup; the recorded delta is what the
+      // agent reproduces in source, so that's fine). Pure containers (only
+      // element children, no direct text) still get the "pin the leaf" hint.
+      var hasDirectText = Array.prototype.some.call(el.childNodes, function (nd) {
+        return nd.nodeType === 3 && nd.textContent.replace(/\s/g, '').length > 0;
+      });
       return {
         fingerprint: fp,
         computed: capture(el),
-        // Full current text + whether it's a leaf (safe to edit textContent
-        // without nuking child elements). Drives the inspector's text field.
         text: (el.textContent || '').slice(0, 2000),
-        textEditable: el.childElementCount === 0,
+        textEditable: hasDirectText,
       };
     },
 
@@ -291,6 +303,27 @@ function AGENT_BODY(CAPTURED_PROPS) {
       });
       rebuildSheet();
       schedule();
+    },
+
+    // Re-create pins after a reload (fresh document → fresh agent, empty
+    // state). Given [{ n, path }], re-bind each via its CSS path; if the node
+    // isn't in the DOM yet, create a hidden placeholder pin so the tracking
+    // loop re-localizes it once the DOM settles. The session re-applies the
+    // recorded CSS/text deltas afterwards (rules are selector-based, so they
+    // re-attach the moment the element regains its data-ve-pin tag).
+    restore: function (list) {
+      (list || []).forEach(function (item) {
+        var el = safeQuery(item.path);
+        if (el) { window.__VE__.bind.call(el, item.n); return; }
+        var existing = pins.get(item.n);
+        if (existing) { existing.box.remove(); existing.badge.remove(); }
+        var vis = makeBadge(item.n);
+        vis.box.style.opacity = '0';
+        vis.badge.style.opacity = '.4';
+        pins.set(item.n, { el: null, badge: vis.badge, box: vis.box, detached: true, n: item.n, path: item.path });
+      });
+      schedule();
+      return Array.from(pins.keys());
     },
 
     clearAll: function () {

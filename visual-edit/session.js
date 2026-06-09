@@ -49,21 +49,53 @@ class Session {
       dbg: this.dbg,
     });
 
-    // Re-inject the agent after a same-tab navigation wiped it. Pins from the
-    // old document are stale; clear them so the renderer drops their badges.
-    this._onNav = () => {
-      this.picker.reinject().then(() => this.picker.arm()).catch(() => {});
-      if (this.pins.size) {
-        this.pins.clear();
-        this.emit('visual-edit:reset', { sessionId: this.id });
-      }
+    // Same-tab navigation wiped the page (and the agent's in-page state). On a
+    // RELOAD of the same page (HMR full reload, manual refresh) we keep the
+    // pins and restore them by fingerprint path — so the user's selection +
+    // live edits survive instead of vanishing. On a genuine navigation to a
+    // different page, the old pins are meaningless, so clear them.
+    this._homeUrl = null;
+    this._onNav = (_e, url) => {
+      void this._handleNav(url ?? this.wc.getURL());
     };
     wc.on('did-navigate', this._onNav);
   }
 
   async start() {
     await this.picker.attach();
+    this._homeUrl = this.wc.getURL();
     await this.picker.arm();
+  }
+
+  // Compare two URLs ignoring the hash — a reload of the same page keeps its
+  // origin + pathname + query; a real navigation changes them.
+  _samePage(a, b) {
+    try {
+      const ua = new URL(a), ub = new URL(b);
+      return ua.origin === ub.origin && ua.pathname === ub.pathname && ua.search === ub.search;
+    } catch { return a === b; }
+  }
+
+  async _handleNav(url) {
+    await this.picker.reinject().catch(() => {});
+    if (this.pins.size && this._homeUrl && this._samePage(url, this._homeUrl)) {
+      // Reload — restore pins by path and replay their recorded edits so the
+      // live preview comes back too.
+      const list = Array.from(this.pins.values()).map((p) => ({ n: p.n, path: p.fingerprint.path }));
+      await this.picker.callAgent('restore', [list]).catch(() => {});
+      for (const p of this.pins.values()) {
+        for (const [prop, d] of Object.entries(p.annotation.css)) {
+          await this.picker.callAgent('applyCss', [p.n, prop, d.to]).catch(() => {});
+        }
+        if (p.annotation.text) await this.picker.callAgent('applyText', [p.n, p.annotation.text.to]).catch(() => {});
+      }
+      this.emit('visual-edit:renumbered', { sessionId: this.id, pins: this.listPins() });
+    } else if (this.pins.size) {
+      this.pins.clear();
+      this.emit('visual-edit:reset', { sessionId: this.id });
+    }
+    this._homeUrl = url;
+    await this.picker.arm().catch(() => {});
   }
 
   /** Pause picking (e.g. while the user is editing in the inspector). */
