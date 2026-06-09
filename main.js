@@ -316,6 +316,29 @@ function createMainWindow(workspaceUrl) {
     if (isMainFrame && !isSameDocument) tabManager.destroyAll();
   });
 
+  // Hijack guard. The main window hosts the workspace shell and must NEVER be
+  // navigated away from the workspace origin. A link/button inside the page
+  // that targets the top frame (instead of window.open, which the handler
+  // below catches) would otherwise replace the ENTIRE UI with that site and —
+  // via the orphan-view guard above — tear down every tab. Observed in the
+  // wild: a click sent the whole window to an external marketing page, leaving
+  // "nothing else" loading. Block any cross-origin top-level navigation and
+  // route it into a workspace tab instead, exactly like a popup. Same-origin
+  // navigations (the SPA navigating within itself, auth redirects on the
+  // workspace host) pass through. loadURL()/reload()/back-forward don't fire
+  // will-navigate, so our own programmatic loads are unaffected.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (/^(about|chrome|devtools|data):/.test(url)) return;
+    const home = readConfig().workspaceUrl || mainWindow.webContents.getURL();
+    let sameOrigin = false;
+    try { sameOrigin = new URL(url).origin === new URL(home).origin; } catch { /* keep false */ }
+    if (sameOrigin) return;
+    event.preventDefault();
+    dbg('will-navigate blocked top-level main-window nav to ' + url + ' — routing to tab');
+    const label = (() => { try { return new URL(url).hostname || url; } catch { return url; } })();
+    mainWindow.webContents.send('open-tab', { url, label });
+  });
+
   // Force our chrome theme onto the remotely-served workspace UI: themed
   // scrollbars + the pro tab-strip/toolbar restyle (AI-bot accent on the
   // active tab & selected tool, hover-only close, modern + button). Done
