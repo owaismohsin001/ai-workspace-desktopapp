@@ -130,18 +130,32 @@ function AGENT_BODY(CAPTURED_PROPS) {
     return { badge: badge, box: box };
   }
 
+  function safeQuery(sel) {
+    if (!sel) return null;
+    try { return document.querySelector(sel); } catch (e) { return null; }
+  }
+
   function position(n) {
     var p = pins.get(n);
     if (!p) return;
     var el = p.el;
     if (!el || !el.isConnected) {
-      // Node was replaced (SPA re-render). Flag detached; hide visuals.
-      p.box.style.opacity = '0';
-      p.badge.style.opacity = '.4';
-      if (!p.detached) { p.detached = true; emit({ type: 'detached', n: n }); }
-      return;
+      // Node was replaced (SPA re-render). Try to re-localize via the stored
+      // CSS path and re-tag the new node, so both the badge AND the live CSS
+      // rule (keyed to [data-ve-pin]) follow the re-render instead of vanishing.
+      var found = safeQuery(p.path);
+      if (found) {
+        p.el = el = found;
+        try { found.setAttribute('data-ve-pin', String(p.n)); } catch (e) {}
+        if (p.detached) { p.detached = false; emit({ type: 'detachstate', n: p.n, detached: false }); }
+      } else {
+        p.box.style.opacity = '0';
+        p.badge.style.opacity = '.4';
+        if (!p.detached) { p.detached = true; emit({ type: 'detachstate', n: p.n, detached: true }); }
+        return;
+      }
     }
-    if (p.detached) { p.detached = false; p.box.style.opacity = '1'; p.badge.style.opacity = '1'; }
+    if (p.detached) { p.detached = false; p.box.style.opacity = '1'; p.badge.style.opacity = '1'; emit({ type: 'detachstate', n: p.n, detached: false }); }
     var r = el.getBoundingClientRect();
     p.box.style.left = r.left + 'px';
     p.box.style.top = r.top + 'px';
@@ -218,9 +232,17 @@ function AGENT_BODY(CAPTURED_PROPS) {
       var existing = pins.get(n);
       if (existing) { existing.box.remove(); existing.badge.remove(); }
       var vis = makeBadge(n);
-      pins.set(n, { el: el, badge: vis.badge, box: vis.box, detached: false });
+      var fp = fingerprint(el);
+      pins.set(n, { el: el, badge: vis.badge, box: vis.box, detached: false, n: n, path: fp.path });
       position(n);
-      return { fingerprint: fingerprint(el), computed: capture(el) };
+      return {
+        fingerprint: fp,
+        computed: capture(el),
+        // Full current text + whether it's a leaf (safe to edit textContent
+        // without nuking child elements). Drives the inspector's text field.
+        text: (el.textContent || '').slice(0, 2000),
+        textEditable: el.childElementCount === 0,
+      };
     },
 
     applyCss: function (n, prop, value) {

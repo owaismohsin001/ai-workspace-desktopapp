@@ -90,7 +90,7 @@ class Picker {
         let msg;
         try { msg = JSON.parse(params.payload); } catch { return; }
         if (msg.type === 'select') this.hooks.onSelect?.(msg.n);
-        else if (msg.type === 'detached') this.hooks.onDetached?.(msg.n);
+        else if (msg.type === 'detachstate') this.hooks.onDetached?.(msg.n, msg.detached);
       } else if (method === 'Page.frameNavigated' && !params.frame.parentId) {
         // Top-level navigation re-runs addScriptToEvaluateOnNewDocument; pins
         // are gone. Session listens for url-change and resets its list.
@@ -134,6 +134,8 @@ class Picker {
         backendNodeId,
         fingerprint: bound.fingerprint,
         computed: bound.computed,
+        text: bound.text,
+        textEditable: bound.textEditable,
       });
     }
     // One-shot inspect mode — re-arm for the next pick.

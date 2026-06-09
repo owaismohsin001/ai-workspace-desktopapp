@@ -41,10 +41,10 @@ class Session {
       nextPinNumber: () => ++this._counter,
       onPick: (p) => this._onPick(p),
       onSelect: (n) => this.emit('visual-edit:pin-selected', { sessionId: this.id, n }),
-      onDetached: (n) => {
+      onDetached: (n, detached) => {
         const pin = this.pins.get(n);
-        if (pin) pin.detached = true;
-        this.emit('visual-edit:pin-detached', { sessionId: this.id, n });
+        if (pin) pin.detached = !!detached;
+        this.emit('visual-edit:pin-detached', { sessionId: this.id, n, detached: !!detached });
       },
       dbg: this.dbg,
     });
@@ -76,6 +76,8 @@ class Session {
       backendNodeId: p.backendNodeId,
       fingerprint: p.fingerprint,
       computed: p.computed,
+      text: p.text ?? '',
+      textEditable: !!p.textEditable,
       annotation: { css: {} },
       detached: false,
     });
@@ -92,6 +94,8 @@ class Session {
       n: pin.n,
       fingerprint: pin.fingerprint,
       computed: pin.computed,
+      text: pin.text,
+      textEditable: pin.textEditable,
       annotation: pin.annotation,
       detached: pin.detached,
     };
