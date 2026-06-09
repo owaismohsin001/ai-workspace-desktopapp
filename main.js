@@ -6,6 +6,7 @@ const fs = require('fs');
 const { TabManager, TAB_SCROLLBAR_CSS } = require('./tab-manager');
 const mcpServer = require('./mcp-server');
 const { TunnelManager } = require('./tunnel-manager');
+const { VisualEdit } = require('./visual-edit');
 
 const DBG = path.join(__dirname, 'debug.log');
 const dbg = (...args) => fs.appendFileSync(DBG, `[${new Date().toISOString()}] ${args.join(' ')}\n`);
@@ -220,6 +221,16 @@ let connectWindow = null;
 // the existing WebContentsView children attached to whichever window is live.
 const tabManager = new TabManager(() => mainWindow, dbg);
 
+// Visual-edit platform tool. Attaches a CDP debugger to a tab's
+// WebContentsView to drive the live picker + inspector preview agent, and
+// builds the agent task (target screenshot + per-pin annotation deltas).
+// Registers the `visual-edit:*` IPC surface on construction.
+const visualEdit = new VisualEdit({
+  getOwnerWindow: () => mainWindow,
+  getWebContents: (tabId) => tabManager.getWebContents(tabId),
+  dbg,
+});
+
 // Phase 6 — automated reverse SSH tunnel to the user's EC2 workspace.
 // Started after a successful sign-in (deep link or restored config),
 // stopped on sign-out / app quit. Token + platformUrl are read from
@@ -386,6 +397,7 @@ function createMainWindow(workspaceUrl) {
     mainWindow = null;
     // Sign-out → reconnect creates a fresh window/renderer; any surviving
     // views would orphan into the new session. Tear them down.
+    void visualEdit.destroyAll();
     tabManager.destroyAll();
   });
   buildAppMenu();
@@ -596,6 +608,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', async () => {
   // Drop every WebContentsView so we don't leak page targets past shutdown.
+  await visualEdit.destroyAll().catch(() => {});
   tabManager.destroyAll();
   await tunnelManager.stop().catch(() => {});
   if (mcpEnabled) await mcpServer.stop({ dbg }).catch(() => {});

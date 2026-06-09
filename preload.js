@@ -9,6 +9,16 @@ const tabTitleListeners = [];
 const tabUrlListeners = [];
 const tunnelStatusListeners = [];
 
+// visual-edit event fan-out. Keyed by channel so a single ipcRenderer.on per
+// channel feeds every subscriber.
+const veListeners = {
+  'visual-edit:pin-added': [],
+  'visual-edit:pin-selected': [],
+  'visual-edit:pin-detached': [],
+  'visual-edit:renumbered': [],
+  'visual-edit:reset': [],
+};
+
 function subscribe(list, cb) {
   list.push(cb);
   return () => {
@@ -60,6 +70,31 @@ contextBridge.exposeInMainWorld('__AIIDE__', {
     onUrlChange: (cb) => subscribe(tabUrlListeners, cb),
   },
 
+  // ── Visual edit tool ───────────────────────────────────────────────
+  // Drives the live visual editor: host-side CDP picker + inspector preview
+  // agent + numbered pin overlay, all bound to a tab's WebContentsView. The
+  // frontend VisualEditorPanel calls these; events come back via on*().
+  visualEdit: {
+    start: (tabId) => ipcRenderer.invoke('visual-edit:start', { tabId }),
+    listPins: (sessionId) => ipcRenderer.invoke('visual-edit:listPins', { sessionId }),
+    /** change = { kind:'css', prop, value, from } | { kind:'text', value, from } */
+    applyEdit: (sessionId, n, change) =>
+      ipcRenderer.invoke('visual-edit:applyEdit', { sessionId, n, change }),
+    setNote: (sessionId, n, note) =>
+      ipcRenderer.invoke('visual-edit:setNote', { sessionId, n, note }),
+    removePin: (sessionId, n) => ipcRenderer.invoke('visual-edit:removePin', { sessionId, n }),
+    pausePicking: (sessionId) => ipcRenderer.invoke('visual-edit:pausePicking', { sessionId }),
+    resumePicking: (sessionId) => ipcRenderer.invoke('visual-edit:resumePicking', { sessionId }),
+    buildEditTask: (sessionId) => ipcRenderer.invoke('visual-edit:buildEditTask', { sessionId }),
+    end: (sessionId) => ipcRenderer.invoke('visual-edit:end', { sessionId }),
+
+    onPinAdded: (cb) => subscribe(veListeners['visual-edit:pin-added'], cb),
+    onPinSelected: (cb) => subscribe(veListeners['visual-edit:pin-selected'], cb),
+    onPinDetached: (cb) => subscribe(veListeners['visual-edit:pin-detached'], cb),
+    onRenumbered: (cb) => subscribe(veListeners['visual-edit:renumbered'], cb),
+    onReset: (cb) => subscribe(veListeners['visual-edit:reset'], cb),
+  },
+
   // Phase 6 — automated reverse SSH tunnel status.
   tunnel: {
     /** Subscribe to status updates. Callback receives
@@ -96,3 +131,9 @@ ipcRenderer.on('tab:url-change', (_event, { tabId, url }) => {
 ipcRenderer.on('tunnel:status', (_event, payload) => {
   for (const cb of tunnelStatusListeners) { try { cb(payload); } catch {} }
 });
+
+for (const channel of Object.keys(veListeners)) {
+  ipcRenderer.on(channel, (_event, payload) => {
+    for (const cb of veListeners[channel]) { try { cb(payload); } catch {} }
+  });
+}
