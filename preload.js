@@ -85,6 +85,8 @@ contextBridge.exposeInMainWorld('__AIIDE__', {
     removePin: (sessionId, n) => ipcRenderer.invoke('visual-edit:removePin', { sessionId, n }),
     pausePicking: (sessionId) => ipcRenderer.invoke('visual-edit:pausePicking', { sessionId }),
     resumePicking: (sessionId) => ipcRenderer.invoke('visual-edit:resumePicking', { sessionId }),
+    /** mode = 'pick' | 'comment' | 'rect' | 'pen' | 'off' */
+    setMode: (sessionId, mode) => ipcRenderer.invoke('visual-edit:setMode', { sessionId, mode }),
     buildEditTask: (sessionId) => ipcRenderer.invoke('visual-edit:buildEditTask', { sessionId }),
     end: (sessionId) => ipcRenderer.invoke('visual-edit:end', { sessionId }),
 

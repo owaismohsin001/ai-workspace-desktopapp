@@ -79,6 +79,7 @@ class VisualEdit {
     h('visual-edit:removePin', ({ sessionId, n }) => this._session(sessionId).removePin(n));
     h('visual-edit:pausePicking', ({ sessionId }) => this._session(sessionId).pausePicking());
     h('visual-edit:resumePicking', ({ sessionId }) => this._session(sessionId).resumePicking());
+    h('visual-edit:setMode', ({ sessionId, mode }) => this._session(sessionId).setMode(mode));
     h('visual-edit:buildEditTask', ({ sessionId }) => this._session(sessionId).buildPayload());
 
     h('visual-edit:end', async ({ sessionId }) => {

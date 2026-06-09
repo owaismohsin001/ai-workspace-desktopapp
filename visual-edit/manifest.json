@@ -15,6 +15,7 @@
     "removePin": "visual-edit:removePin { sessionId, n } -> { ok, pins }",
     "pausePicking": "visual-edit:pausePicking { sessionId } -> ok",
     "resumePicking": "visual-edit:resumePicking { sessionId } -> ok",
+    "setMode": "visual-edit:setMode { sessionId, mode } -> ok   (mode: pick | comment | rect | pen | off)",
     "buildEditTask": "visual-edit:buildEditTask { sessionId } -> { targetScreenshot, annotations, url }",
     "end": "visual-edit:end { sessionId } -> { ok }"
   },

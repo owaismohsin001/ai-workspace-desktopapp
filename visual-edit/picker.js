@@ -91,6 +91,7 @@ class Picker {
         try { msg = JSON.parse(params.payload); } catch { return; }
         if (msg.type === 'select') this.hooks.onSelect?.(msg.n);
         else if (msg.type === 'detachstate') this.hooks.onDetached?.(msg.n, msg.detached);
+        else if (msg.type === 'shape') this.hooks.onShape?.(msg.shape);
       } else if (method === 'Page.frameNavigated' && !params.frame.parentId) {
         // Top-level navigation re-runs addScriptToEvaluateOnNewDocument; pins
         // are gone. Session listens for url-change and resets its list.
@@ -101,7 +102,6 @@ class Picker {
   }
 
   async _handlePick(backendNodeId) {
-    const n = this.hooks.nextPinNumber();
     let resolved;
     try {
       resolved = await this.send('DOM.resolveNode', { backendNodeId });
@@ -115,10 +115,11 @@ class Picker {
 
     let bound = null;
     try {
+      // The agent assigns the number (unified pin/shape counter) and returns
+      // it — keeps the screenshot's join-key sequence collision-free.
       const res = await this.send('Runtime.callFunctionOn', {
         objectId,
-        functionDeclaration: 'function(n){ return window.__VE__ ? window.__VE__.bind.call(this, n) : null; }',
-        arguments: [{ value: n }],
+        functionDeclaration: 'function(){ return window.__VE__ ? window.__VE__.bind.call(this) : null; }',
         returnByValue: true,
       });
       bound = res.result?.value ?? null;
@@ -130,7 +131,7 @@ class Picker {
 
     if (bound) {
       this.hooks.onPick({
-        n,
+        n: bound.n,
         backendNodeId,
         fingerprint: bound.fingerprint,
         computed: bound.computed,

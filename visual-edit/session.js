@@ -2,29 +2,24 @@
 
 // ── Visual-edit session ──────────────────────────────────────────────────
 //
-// One session per active tab. Owns the pin list + per-pin annotation deltas,
-// orchestrates the Picker (host-side CDP), and builds the agent payload.
+// One session per active tab. Owns a single numbered list of ANNOTATIONS —
+// element pins (precise CSS/text edits) and freeform shapes (comment / rect /
+// pen) — all sharing one counter (assigned in-page by the agent) so the
+// number on the target screenshot is an unambiguous join key. Orchestrates the
+// Picker (host-side CDP) and builds the agent payload.
 //
-// The number is the join key (plan): pin N binds one node + fingerprint +
-// recorded { from → to } delta. The live-edited page is the spec; the agent
-// reproduces the deltas in source and pixel-diffs against the captured target
-// screenshot.
+// The live-edited page is the spec; the agent reproduces the deltas + honours
+// the freeform annotations in source, then pixel-diffs against the captured
+// target screenshot.
 
 const { Picker } = require('./picker');
-
-/**
- * @typedef {Object} Annotation
- * @property {Record<string,{from:string,to:string}>} css   real CSS props
- * @property {{from:string,to:string}=} text
- * @property {string=} note
- */
 
 class Session {
   /**
    * @param {string} sessionId
    * @param {string} tabId
    * @param {Electron.WebContents} wc
-   * @param {(channel:string, payload:any) => void} emitToRenderer  push events
+   * @param {(channel:string, payload:any) => void} emitToRenderer
    * @param {(...a:any[]) => void} dbg
    */
   constructor(sessionId, tabId, wc, emitToRenderer, dbg) {
@@ -33,31 +28,24 @@ class Session {
     this.wc = wc;
     this.emit = emitToRenderer;
     this.dbg = dbg ?? (() => {});
-    this._counter = 0;
-    /** @type {Map<number, {n:number, backendNodeId:number, fingerprint:object, computed:object, annotation:Annotation, detached:boolean}>} */
-    this.pins = new Map();
+    /** @type {Map<number, object>} n -> item ('element' | 'comment' | 'rect' | 'pen') */
+    this.items = new Map();
+    this.mode = 'pick'; // 'pick' | 'comment' | 'rect' | 'pen' | 'off'
 
     this.picker = new Picker(wc, {
-      nextPinNumber: () => ++this._counter,
       onPick: (p) => this._onPick(p),
+      onShape: (s) => this._onShape(s),
       onSelect: (n) => this.emit('visual-edit:pin-selected', { sessionId: this.id, n }),
       onDetached: (n, detached) => {
-        const pin = this.pins.get(n);
-        if (pin) pin.detached = !!detached;
+        const it = this.items.get(n);
+        if (it) it.detached = !!detached;
         this.emit('visual-edit:pin-detached', { sessionId: this.id, n, detached: !!detached });
       },
       dbg: this.dbg,
     });
 
-    // Same-tab navigation wiped the page (and the agent's in-page state). On a
-    // RELOAD of the same page (HMR full reload, manual refresh) we keep the
-    // pins and restore them by fingerprint path — so the user's selection +
-    // live edits survive instead of vanishing. On a genuine navigation to a
-    // different page, the old pins are meaningless, so clear them.
     this._homeUrl = null;
-    this._onNav = (_e, url) => {
-      void this._handleNav(url ?? this.wc.getURL());
-    };
+    this._onNav = (_e, url) => { void this._handleNav(url ?? this.wc.getURL()); };
     wc.on('did-navigate', this._onNav);
   }
 
@@ -67,43 +55,30 @@ class Session {
     await this.picker.arm();
   }
 
-  // Compare two URLs ignoring the hash — a reload of the same page keeps its
-  // origin + pathname + query; a real navigation changes them.
-  _samePage(a, b) {
-    try {
-      const ua = new URL(a), ub = new URL(b);
-      return ua.origin === ub.origin && ua.pathname === ub.pathname && ua.search === ub.search;
-    } catch { return a === b; }
-  }
-
-  async _handleNav(url) {
-    await this.picker.reinject().catch(() => {});
-    if (this.pins.size && this._homeUrl && this._samePage(url, this._homeUrl)) {
-      // Reload — restore pins by path and replay their recorded edits so the
-      // live preview comes back too.
-      const list = Array.from(this.pins.values()).map((p) => ({ n: p.n, path: p.fingerprint.path }));
-      await this.picker.callAgent('restore', [list]).catch(() => {});
-      for (const p of this.pins.values()) {
-        for (const [prop, d] of Object.entries(p.annotation.css)) {
-          await this.picker.callAgent('applyCss', [p.n, prop, d.to]).catch(() => {});
-        }
-        if (p.annotation.text) await this.picker.callAgent('applyText', [p.n, p.annotation.text.to]).catch(() => {});
-      }
-      this.emit('visual-edit:renumbered', { sessionId: this.id, pins: this.listPins() });
-    } else if (this.pins.size) {
-      this.pins.clear();
-      this.emit('visual-edit:reset', { sessionId: this.id });
+  /* ── modes ───────────────────────────────────────────────────────────── */
+  // 'pick' = host-side element inspect; comment/rect/pen = in-page draw
+  // surface; 'off' = neither. They're mutually exclusive.
+  async setMode(mode) {
+    this.mode = mode;
+    if (mode === 'pick') {
+      await this.picker.callAgent('setMode', ['off']);
+      await this.picker.arm();
+    } else if (mode === 'off') {
+      await this.picker.callAgent('setMode', ['off']);
+      await this.picker.disarm();
+    } else {
+      await this.picker.disarm();
+      await this.picker.callAgent('setMode', [mode]);
     }
-    this._homeUrl = url;
-    await this.picker.arm().catch(() => {});
+    return { ok: true, mode };
   }
+  async pausePicking() { return this.setMode('off'); }
+  async resumePicking() { return this.setMode('pick'); }
 
-  /** Pause picking (e.g. while the user is editing in the inspector). */
-  async pausePicking() { await this.picker.disarm(); }
-  async resumePicking() { await this.picker.arm(); }
-
+  /* ── ingest ──────────────────────────────────────────────────────────── */
   _onPick(p) {
-    this.pins.set(p.n, {
+    this.items.set(p.n, {
+      kind: 'element',
       n: p.n,
       backendNodeId: p.backendNodeId,
       fingerprint: p.fingerprint,
@@ -113,98 +88,110 @@ class Session {
       annotation: { css: {} },
       detached: false,
     });
-    this.emit('visual-edit:pin-added', {
-      sessionId: this.id,
-      pin: this._publicPin(p.n),
-    });
+    this.emit('visual-edit:pin-added', { sessionId: this.id, pin: this._publicItem(p.n) });
   }
 
-  _publicPin(n) {
-    const pin = this.pins.get(n);
-    if (!pin) return null;
-    return {
-      n: pin.n,
-      fingerprint: pin.fingerprint,
-      computed: pin.computed,
-      text: pin.text,
-      textEditable: pin.textEditable,
-      annotation: pin.annotation,
-      detached: pin.detached,
-    };
+  _onShape(s) {
+    this.items.set(s.n, { kind: s.kind, n: s.n, geom: s.geom, note: s.note || '' });
+    this.emit('visual-edit:pin-added', { sessionId: this.id, pin: this._publicItem(s.n) });
+  }
+
+  _publicItem(n) {
+    const it = this.items.get(n);
+    if (!it) return null;
+    if (it.kind === 'element') {
+      return { n: it.n, kind: 'element', fingerprint: it.fingerprint, computed: it.computed, text: it.text, textEditable: it.textEditable, annotation: it.annotation, detached: it.detached };
+    }
+    return { n: it.n, kind: it.kind, geom: it.geom, note: it.note };
   }
 
   listPins() {
-    return Array.from(this.pins.keys()).sort((a, b) => a - b).map((n) => this._publicPin(n));
+    return Array.from(this.items.keys()).sort((a, b) => a - b).map((n) => this._publicItem(n));
   }
 
-  /**
-   * Record + live-apply one edit. `change` is already composed to real CSS by
-   * the inspector (compose-to-CSS lives there). Shapes:
-   *   { kind:'css', prop, value, from }
-   *   { kind:'text', value, from }
-   */
+  /* ── edits ───────────────────────────────────────────────────────────── */
   async applyEdit(n, change) {
-    const pin = this.pins.get(n);
-    if (!pin) return { error: 'no such pin ' + n };
-
+    const it = this.items.get(n);
+    if (!it || it.kind !== 'element') return { error: 'not an editable element pin: ' + n };
     if (change.kind === 'css') {
       const { prop, value, from } = change;
-      const existing = pin.annotation.css[prop];
-      pin.annotation.css[prop] = { from: existing ? existing.from : (from ?? ''), to: value };
-      // Drop a delta that was reverted back to its original value.
-      if (pin.annotation.css[prop].from === value) delete pin.annotation.css[prop];
+      const existing = it.annotation.css[prop];
+      it.annotation.css[prop] = { from: existing ? existing.from : (from ?? ''), to: value };
+      if (it.annotation.css[prop].from === value) delete it.annotation.css[prop];
       await this.picker.callAgent('applyCss', [n, prop, value]);
     } else if (change.kind === 'text') {
       const { value, from } = change;
-      const origFrom = pin.annotation.text ? pin.annotation.text.from : (from ?? '');
-      if (origFrom === value) delete pin.annotation.text;
-      else pin.annotation.text = { from: origFrom, to: value };
+      const origFrom = it.annotation.text ? it.annotation.text.from : (from ?? '');
+      if (origFrom === value) delete it.annotation.text;
+      else it.annotation.text = { from: origFrom, to: value };
       await this.picker.callAgent('applyText', [n, value]);
     }
-    return { ok: true, annotation: pin.annotation };
+    return { ok: true, annotation: it.annotation };
   }
 
-  setNote(n, note) {
-    const pin = this.pins.get(n);
-    if (!pin) return { error: 'no such pin ' + n };
-    if (note) pin.annotation.note = note;
-    else delete pin.annotation.note;
+  async setNote(n, note) {
+    const it = this.items.get(n);
+    if (!it) return { error: 'no such item ' + n };
+    if (it.kind === 'element') {
+      if (note) it.annotation.note = note; else delete it.annotation.note;
+    } else {
+      it.note = note || '';
+      await this.picker.callAgent('setNote', [n, note || '']);
+    }
     return { ok: true };
   }
 
   async removePin(n) {
-    if (!this.pins.has(n)) return { ok: true };
+    if (!this.items.has(n)) return { ok: true, pins: this.listPins() };
     await this.picker.callAgent('removePin', [n]);
-    this.pins.delete(n);
-    await this._renumber();
+    this.items.delete(n);
+    // Numbers are STABLE (no renumber) — a gap is fine; the number is just a
+    // join key and stable numbers keep the agent's references valid.
+    this.emit('visual-edit:renumbered', { sessionId: this.id, pins: this.listPins() });
     return { ok: true, pins: this.listPins() };
   }
 
-  // Compact pin numbers to 1..N (stable order) after a removal.
-  async _renumber() {
-    const ordered = Array.from(this.pins.keys()).sort((a, b) => a - b);
-    const map = {};
-    let next = 1;
-    const rebuilt = new Map();
-    for (const oldN of ordered) {
-      const pin = this.pins.get(oldN);
-      pin.n = next;
-      rebuilt.set(next, pin);
-      map[oldN] = next;
-      next += 1;
-    }
-    this.pins = rebuilt;
-    this._counter = next - 1;
-    await this.picker.callAgent('renumber', [map]);
-    this.emit('visual-edit:renumbered', { sessionId: this.id, pins: this.listPins() });
+  /* ── reload survival ───────────────────────────────────────────────── */
+  _samePage(a, b) {
+    try {
+      const ua = new URL(a), ub = new URL(b);
+      return ua.origin === ub.origin && ua.pathname === ub.pathname && ua.search === ub.search;
+    } catch { return a === b; }
   }
 
-  /**
-   * Build the agent task: the target screenshot (live-edited page, badges
-   * hidden so they don't bake into the pixels the agent must match) + the
-   * annotation set keyed by pin number + fingerprint.
-   */
+  async _handleNav(url) {
+    await this.picker.reinject().catch(() => {});
+    if (this.items.size && this._homeUrl && this._samePage(url, this._homeUrl)) {
+      const elements = [];
+      const shapes = [];
+      for (const it of this.items.values()) {
+        if (it.kind === 'element') elements.push({ n: it.n, path: it.fingerprint.path });
+        else shapes.push({ n: it.n, kind: it.kind, geom: it.geom, note: it.note });
+      }
+      if (elements.length) await this.picker.callAgent('restore', [elements]).catch(() => {});
+      if (shapes.length) await this.picker.callAgent('restoreShapes', [shapes]).catch(() => {});
+      for (const it of this.items.values()) {
+        if (it.kind !== 'element') continue;
+        for (const [prop, d] of Object.entries(it.annotation.css)) {
+          await this.picker.callAgent('applyCss', [it.n, prop, d.to]).catch(() => {});
+        }
+        if (it.annotation.text) await this.picker.callAgent('applyText', [it.n, it.annotation.text.to]).catch(() => {});
+      }
+      this.emit('visual-edit:renumbered', { sessionId: this.id, pins: this.listPins() });
+    } else if (this.items.size) {
+      this.items.clear();
+      this.emit('visual-edit:reset', { sessionId: this.id });
+    }
+    this._homeUrl = url;
+    // Restore whatever mode was active before the nav.
+    await this.setMode(this.mode).catch(() => {});
+  }
+
+  /* ── payload ───────────────────────────────────────────────────────── */
   async buildPayload() {
+    // Hide the PIN layer (selection boxes/badges) for the target screenshot —
+    // shapes stay visible because they ARE annotations the agent must see.
+    await this.picker.callAgent('setMode', ['off']);
     await this.picker.disarm();
     await this.picker.callAgent('setOverlayVisible', [false]);
     let dataB64 = null;
@@ -214,6 +201,7 @@ class Session {
       await this.picker.callAgent('setOverlayVisible', [true]);
     }
     const annotations = this.listPins().filter((p) => {
+      if (p.kind !== 'element') return true; // every shape is an intentional annotation
       const a = p.annotation;
       return (a.css && Object.keys(a.css).length) || a.text || a.note;
     });
@@ -229,7 +217,7 @@ class Session {
   async end() {
     try { this.wc.off('did-navigate', this._onNav); } catch {}
     await this.picker.detach().catch(() => {});
-    this.pins.clear();
+    this.items.clear();
   }
 }
 
