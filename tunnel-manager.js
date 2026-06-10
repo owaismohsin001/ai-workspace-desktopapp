@@ -165,6 +165,10 @@ class TunnelManager extends EventEmitter {
       const args = [
         '-N',
         '-R', `${LOCAL_PORT}:127.0.0.1:${REMOTE_PORT}`,
+        // Forward local ports to the workspace so the remote frontend's
+        // localhost:8090 (API/SSE) and localhost:8080 (VS Code) calls land
+        // on the workspace services instead of being connection-refused.
+        ...FORWARDS.flatMap(([host, lp, rp]) => ['-L', `${lp}:${host}:${rp}`]),
         '-i', this.keyPath,
         '-o', `ServerAliveInterval=${KEEP_ALIVE_INTERVAL_SEC}`,
         '-o', `ServerAliveCountMax=${KEEP_ALIVE_COUNT_MAX}`,
