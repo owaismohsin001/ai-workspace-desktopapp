@@ -30,6 +30,7 @@
       "preload-connect.js",
       "preload-tab.js",
       "connect.html",
+      "visual-edit/**",
       "assets/**"
     ],
     "protocols": [
