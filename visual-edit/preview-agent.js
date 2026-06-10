@@ -58,6 +58,7 @@ function AGENT_BODY(CAPTURED_PROPS) {
   var shapes = new Map();  // n -> { n, kind, geom, note }
   var sheet = null;
   var rules = new Map();   // n -> { prop: value }
+  var removed = new Set(); // n's whose element is marked for deletion (display:none preview)
   var mode = 'off';
   var surface = null;
   var draft = null;        // shape being drawn
@@ -93,6 +94,9 @@ function AGENT_BODY(CAPTURED_PROPS) {
       Object.keys(decls).forEach(function (prop) { body += '  ' + cssName(prop) + ': ' + decls[prop] + ' !important;\n'; });
       if (body) css += selectorFor(n) + ' {\n' + body + '}\n';
     });
+    // Elements marked for removal preview as display:none (the source delta is
+    // a real deletion — see session.annotation.remove).
+    removed.forEach(function (n) { css += selectorFor(n) + ' { display: none !important; }\n'; });
     var s = ensureSheet();
     try { s.replaceSync(css); } catch (e) { if (s._el) s._el.textContent = css; }
   }
@@ -307,6 +311,61 @@ function AGENT_BODY(CAPTURED_PROPS) {
       if (p && p.el && p.el.isConnected) { try { p.el.textContent = text; } catch (e) {} position(n); }
     },
 
+    // Drop ALL live CSS rules for a pin (used by undo/redo, which rebuilds the
+    // pin's live state from the restored annotation snapshot).
+    clearCss: function (n) { rules.delete(n); rebuildSheet(); position(n); },
+
+    // Mark/unmark an element for deletion — previewed as display:none so the
+    // user sees the section gone; the source delta is a real removal.
+    setRemoved: function (n, on) {
+      if (on) removed.add(n); else removed.delete(n);
+      rebuildSheet(); position(n);
+    },
+
+    // Direct on-page text editing: make the pinned element contentEditable and
+    // focus it so the user types straight onto the element. Streams 'textinput'
+    // on every change and 'textdone' when finished (Enter / Esc / blur).
+    setTextEdit: function (n, on) {
+      var p = pins.get(n);
+      if (!p || !p.el || !p.el.isConnected) return false;
+      var el = p.el;
+      if (on) {
+        if (p._te) return true;
+        try {
+          el.setAttribute('contenteditable', 'true');
+          el.setAttribute('spellcheck', 'false');
+          el.style.outline = '2px solid ' + ACCENT_PIN;
+          el.style.outlineOffset = '1px';
+        } catch (e) {}
+        var onInput = function () { emit({ type: 'textinput', n: n, text: (el.textContent || '') }); };
+        var onKey = function (ev) {
+          if (ev.key === 'Escape' || (ev.key === 'Enter' && !ev.shiftKey)) { ev.preventDefault(); el.blur(); }
+        };
+        var onBlur = function () { window.__VE__.setTextEdit(n, false); emit({ type: 'textdone', n: n, text: (el.textContent || '') }); };
+        el.addEventListener('input', onInput);
+        el.addEventListener('keydown', onKey);
+        el.addEventListener('blur', onBlur);
+        p._te = { onInput: onInput, onKey: onKey, onBlur: onBlur };
+        try {
+          el.focus();
+          var range = document.createRange(); range.selectNodeContents(el);
+          var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+        } catch (e) {}
+        return true;
+      }
+      if (p._te) {
+        try {
+          el.removeEventListener('input', p._te.onInput);
+          el.removeEventListener('keydown', p._te.onKey);
+          el.removeEventListener('blur', p._te.onBlur);
+        } catch (e) {}
+        p._te = null;
+      }
+      try { el.removeAttribute('contenteditable'); el.style.outline = ''; el.style.outlineOffset = ''; } catch (e) {}
+      position(n);
+      return true;
+    },
+
     // Arm/disarm the in-page draw surface. 'off' removes it (so element
     // picking + normal page interaction resume).
     setMode: function (m) {
@@ -326,8 +385,12 @@ function AGENT_BODY(CAPTURED_PROPS) {
 
     removePin: function (n) {
       var p = pins.get(n);
-      if (p) { if (p.el && p.el.removeAttribute) p.el.removeAttribute('data-ve-pin'); p.box.remove(); p.badge.remove(); }
-      pins.delete(n); rules.delete(n); rebuildSheet();
+      if (p) {
+        if (p._te) { try { window.__VE__.setTextEdit(n, false); } catch (e) {} }
+        if (p.el && p.el.removeAttribute) p.el.removeAttribute('data-ve-pin');
+        p.box.remove(); p.badge.remove();
+      }
+      pins.delete(n); rules.delete(n); removed.delete(n); rebuildSheet();
       if (shapes.has(n)) { shapes.delete(n); renderShapes(); }
     },
 
@@ -351,8 +414,11 @@ function AGENT_BODY(CAPTURED_PROPS) {
     },
 
     clearAll: function () {
-      pins.forEach(function (p) { if (p.el && p.el.removeAttribute) p.el.removeAttribute('data-ve-pin'); });
-      pins.clear(); shapes.clear(); rules.clear(); mode = 'off';
+      pins.forEach(function (p, n) {
+        if (p._te) { try { window.__VE__.setTextEdit(n, false); } catch (e) {} }
+        if (p.el && p.el.removeAttribute) p.el.removeAttribute('data-ve-pin');
+      });
+      pins.clear(); shapes.clear(); rules.clear(); removed.clear(); mode = 'off';
       if (surface) { surface.remove(); surface = null; }
       var ov = document.getElementById(OVERLAY_ID);
       if (ov) ov.remove();

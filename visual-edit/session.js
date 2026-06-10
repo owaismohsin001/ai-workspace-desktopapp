@@ -32,9 +32,20 @@ class Session {
     this.items = new Map();
     this.mode = 'pick'; // 'pick' | 'comment' | 'rect' | 'pen' | 'off'
 
+    // Undo/redo: full-state snapshots of element annotations. Edits to the SAME
+    // (pin, prop) coalesce into one step via _lastEditKey so dragging a slider
+    // is a single undo, not one per intermediate value.
+    /** @type {Array<Map<number, object>>} */
+    this.undoStack = [];
+    /** @type {Array<Map<number, object>>} */
+    this.redoStack = [];
+    this._lastEditKey = null;
+
     this.picker = new Picker(wc, {
       onPick: (p) => this._onPick(p),
       onShape: (s) => this._onShape(s),
+      onTextInput: (n, text) => this._onTextInput(n, text),
+      onTextDone: (n, text) => this._onTextDone(n, text),
       onSelect: (n) => this.emit('visual-edit:pin-selected', { sessionId: this.id, n }),
       onDetached: (n, detached) => {
         const it = this.items.get(n);
@@ -75,8 +86,63 @@ class Session {
   async pausePicking() { return this.setMode('off'); }
   async resumePicking() { return this.setMode('pick'); }
 
+  /* ── undo / redo (full-state annotation snapshots) ───────────────────── */
+  _snapshot() {
+    const snap = new Map();
+    for (const [n, it] of this.items) {
+      if (it.kind === 'element') snap.set(n, JSON.parse(JSON.stringify(it.annotation)));
+    }
+    return snap;
+  }
+  // Record the pre-edit state once per "edit run". `key` identifies the field
+  // being tweaked; repeated edits to the same key coalesce into one undo step.
+  _pushUndo(key) {
+    if (key && key === this._lastEditKey) return;
+    this._lastEditKey = key ?? null;
+    this.undoStack.push(this._snapshot());
+    if (this.undoStack.length > 100) this.undoStack.shift();
+    this.redoStack = [];
+  }
+  async _restoreSnapshot(snap) {
+    for (const [n, it] of this.items) {
+      if (it.kind !== 'element') continue;
+      const ann = snap.get(n) || { css: {} };
+      it.annotation = JSON.parse(JSON.stringify(ann));
+      await this.picker.callAgent('clearCss', [n]).catch(() => {});
+      for (const [prop, d] of Object.entries(it.annotation.css || {})) {
+        await this.picker.callAgent('applyCss', [n, prop, d.to]).catch(() => {});
+      }
+      // Only touch textContent on leaf text nodes — applyText on a container
+      // would wipe its child elements. Reset to original when the text delta
+      // was undone away.
+      if (it.textEditable) {
+        await this.picker.callAgent('applyText', [n, it.annotation.text ? it.annotation.text.to : it.text]).catch(() => {});
+      }
+      await this.picker.callAgent('setRemoved', [n, !!it.annotation.remove]).catch(() => {});
+    }
+  }
+  async undo() {
+    if (!this.undoStack.length) {
+      return { ok: false, canUndo: false, canRedo: this.redoStack.length > 0, pins: this.listPins() };
+    }
+    this.redoStack.push(this._snapshot());
+    await this._restoreSnapshot(this.undoStack.pop());
+    this._lastEditKey = null;
+    return { ok: true, canUndo: this.undoStack.length > 0, canRedo: this.redoStack.length > 0, pins: this.listPins() };
+  }
+  async redo() {
+    if (!this.redoStack.length) {
+      return { ok: false, canUndo: this.undoStack.length > 0, canRedo: false, pins: this.listPins() };
+    }
+    this.undoStack.push(this._snapshot());
+    await this._restoreSnapshot(this.redoStack.pop());
+    this._lastEditKey = null;
+    return { ok: true, canUndo: this.undoStack.length > 0, canRedo: this.redoStack.length > 0, pins: this.listPins() };
+  }
+
   /* ── ingest ──────────────────────────────────────────────────────────── */
   _onPick(p) {
+    this._lastEditKey = null; // a fresh pick starts a new undo run
     this.items.set(p.n, {
       kind: 'element',
       n: p.n,
@@ -113,6 +179,7 @@ class Session {
   async applyEdit(n, change) {
     const it = this.items.get(n);
     if (!it || it.kind !== 'element') return { error: 'not an editable element pin: ' + n };
+    this._pushUndo(`${n}:${change.kind === 'css' ? change.prop : 'text'}`);
     if (change.kind === 'css') {
       const { prop, value, from } = change;
       const existing = it.annotation.css[prop];
@@ -126,6 +193,55 @@ class Session {
       else it.annotation.text = { from: origFrom, to: value };
       await this.picker.callAgent('applyText', [n, value]);
     }
+    return { ok: true, annotation: it.annotation };
+  }
+
+  /* ── direct on-page text editing ─────────────────────────────────────── */
+  // Toggle contentEditable on the pinned element so the user types straight
+  // onto the page. Picking is paused while editing so clicks land as a caret.
+  async editText(n, on) {
+    const it = this.items.get(n);
+    if (!it || it.kind !== 'element') return { error: 'not an element pin: ' + n };
+    if (on) {
+      await this.picker.disarm();
+      const ok = await this.picker.callAgent('setTextEdit', [n, true]);
+      this._lastEditKey = null;
+      return { ok: !!ok, editing: n };
+    }
+    await this.picker.callAgent('setTextEdit', [n, false]);
+    if (this.mode === 'pick') await this.picker.arm();
+    return { ok: true, editing: null };
+  }
+
+  // Live text typed on the page → record the same { from → to } delta the
+  // panel's Content field produces, coalesced into one undo step.
+  _onTextInput(n, text) {
+    const it = this.items.get(n);
+    if (!it || it.kind !== 'element') return;
+    this._pushUndo(`${n}:text`);
+    const origFrom = it.annotation.text ? it.annotation.text.from : (it.text ?? '');
+    if (origFrom === text) delete it.annotation.text;
+    else it.annotation.text = { from: origFrom, to: text };
+    this.emit('visual-edit:pin-added', { sessionId: this.id, pin: this._publicItem(n) });
+  }
+
+  _onTextDone(n) {
+    this._lastEditKey = null;
+    if (this.mode === 'pick') this.picker.arm().catch(() => {});
+    this.emit('visual-edit:text-edit-end', { sessionId: this.id, n });
+  }
+
+  /* ── remove an element (section) ─────────────────────────────────────── */
+  // Marks the element for deletion: previewed as display:none, and emitted as
+  // a real source removal in the agent payload.
+  async removeElement(n, on) {
+    const it = this.items.get(n);
+    if (!it || it.kind !== 'element') return { error: 'not an element pin: ' + n };
+    this._pushUndo(`${n}:remove`);
+    this._lastEditKey = null;
+    if (on) it.annotation.remove = true; else delete it.annotation.remove;
+    await this.picker.callAgent('setRemoved', [n, !!on]);
+    this.emit('visual-edit:pin-added', { sessionId: this.id, pin: this._publicItem(n) });
     return { ok: true, annotation: it.annotation };
   }
 
@@ -143,6 +259,7 @@ class Session {
 
   async removePin(n) {
     if (!this.items.has(n)) return { ok: true, pins: this.listPins() };
+    this._lastEditKey = null;
     await this.picker.callAgent('removePin', [n]);
     this.items.delete(n);
     // Numbers are STABLE (no renumber) — a gap is fine; the number is just a
@@ -176,6 +293,7 @@ class Session {
           await this.picker.callAgent('applyCss', [it.n, prop, d.to]).catch(() => {});
         }
         if (it.annotation.text) await this.picker.callAgent('applyText', [it.n, it.annotation.text.to]).catch(() => {});
+        if (it.annotation.remove) await this.picker.callAgent('setRemoved', [it.n, true]).catch(() => {});
       }
       this.emit('visual-edit:renumbered', { sessionId: this.id, pins: this.listPins() });
     } else if (this.items.size) {
@@ -203,7 +321,7 @@ class Session {
     const annotations = this.listPins().filter((p) => {
       if (p.kind !== 'element') return true; // every shape is an intentional annotation
       const a = p.annotation;
-      return (a.css && Object.keys(a.css).length) || a.text || a.note;
+      return (a.css && Object.keys(a.css).length) || a.text || a.note || a.remove;
     });
     return {
       sessionId: this.id,

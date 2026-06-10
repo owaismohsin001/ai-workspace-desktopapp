@@ -17,6 +17,7 @@ const veListeners = {
   'visual-edit:pin-detached': [],
   'visual-edit:renumbered': [],
   'visual-edit:reset': [],
+  'visual-edit:text-edit-end': [],
 };
 
 function subscribe(list, cb) {
@@ -83,6 +84,12 @@ contextBridge.exposeInMainWorld('__AIIDE__', {
     setNote: (sessionId, n, note) =>
       ipcRenderer.invoke('visual-edit:setNote', { sessionId, n, note }),
     removePin: (sessionId, n) => ipcRenderer.invoke('visual-edit:removePin', { sessionId, n }),
+    /** Toggle direct on-page text editing for an element pin. */
+    editText: (sessionId, n, on) => ipcRenderer.invoke('visual-edit:editText', { sessionId, n, on }),
+    /** Mark/unmark an element pin for deletion (display:none preview + source removal). */
+    removeElement: (sessionId, n, on) => ipcRenderer.invoke('visual-edit:removeElement', { sessionId, n, on }),
+    undo: (sessionId) => ipcRenderer.invoke('visual-edit:undo', { sessionId }),
+    redo: (sessionId) => ipcRenderer.invoke('visual-edit:redo', { sessionId }),
     pausePicking: (sessionId) => ipcRenderer.invoke('visual-edit:pausePicking', { sessionId }),
     resumePicking: (sessionId) => ipcRenderer.invoke('visual-edit:resumePicking', { sessionId }),
     /** mode = 'pick' | 'comment' | 'rect' | 'pen' | 'off' */
@@ -95,6 +102,7 @@ contextBridge.exposeInMainWorld('__AIIDE__', {
     onPinDetached: (cb) => subscribe(veListeners['visual-edit:pin-detached'], cb),
     onRenumbered: (cb) => subscribe(veListeners['visual-edit:renumbered'], cb),
     onReset: (cb) => subscribe(veListeners['visual-edit:reset'], cb),
+    onTextEditEnd: (cb) => subscribe(veListeners['visual-edit:text-edit-end'], cb),
   },
 
   // Phase 6 — automated reverse SSH tunnel status.

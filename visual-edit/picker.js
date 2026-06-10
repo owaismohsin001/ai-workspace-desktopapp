@@ -92,6 +92,8 @@ class Picker {
         if (msg.type === 'select') this.hooks.onSelect?.(msg.n);
         else if (msg.type === 'detachstate') this.hooks.onDetached?.(msg.n, msg.detached);
         else if (msg.type === 'shape') this.hooks.onShape?.(msg.shape);
+        else if (msg.type === 'textinput') this.hooks.onTextInput?.(msg.n, msg.text);
+        else if (msg.type === 'textdone') this.hooks.onTextDone?.(msg.n, msg.text);
       } else if (method === 'Page.frameNavigated' && !params.frame.parentId) {
         // Top-level navigation re-runs addScriptToEvaluateOnNewDocument; pins
         // are gone. Session listens for url-change and resets its list.

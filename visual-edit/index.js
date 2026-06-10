@@ -77,6 +77,10 @@ class VisualEdit {
     h('visual-edit:applyEdit', ({ sessionId, n, change }) => this._session(sessionId).applyEdit(n, change));
     h('visual-edit:setNote', ({ sessionId, n, note }) => this._session(sessionId).setNote(n, note));
     h('visual-edit:removePin', ({ sessionId, n }) => this._session(sessionId).removePin(n));
+    h('visual-edit:editText', ({ sessionId, n, on }) => this._session(sessionId).editText(n, on));
+    h('visual-edit:removeElement', ({ sessionId, n, on }) => this._session(sessionId).removeElement(n, on));
+    h('visual-edit:undo', ({ sessionId }) => this._session(sessionId).undo());
+    h('visual-edit:redo', ({ sessionId }) => this._session(sessionId).redo());
     h('visual-edit:pausePicking', ({ sessionId }) => this._session(sessionId).pausePicking());
     h('visual-edit:resumePicking', ({ sessionId }) => this._session(sessionId).resumePicking());
     h('visual-edit:setMode', ({ sessionId, mode }) => this._session(sessionId).setMode(mode));
