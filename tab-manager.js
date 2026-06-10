@@ -90,6 +90,16 @@ class TabManager {
     }
   }
 
+  /** Resolve a tab's live webContents (or null). Used by the visual-edit
+   *  tool, which attaches a CDP debugger to the tab's WebContentsView to
+   *  drive the picker + live preview agent. */
+  getWebContents(tabId) {
+    const entry = this.tabs.get(tabId);
+    if (!entry) return null;
+    const wc = entry.view.webContents;
+    return wc && !wc.isDestroyed() ? wc : null;
+  }
+
   /** Destroy every view. Called on window-all-closed so we don't leak
    *  WebContents past app shutdown on macOS. */
   destroyAll() {

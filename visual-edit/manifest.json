@@ -1,0 +1,34 @@
+{
+  "name": "visual-edit",
+  "version": "1.0.0",
+  "title": "Visual Edit",
+  "description": "Point at elements on the loaded page, edit them live through an inspector, and have the agent reproduce every change in source. The live-edited page is the spec; edits are recorded as exact { from → to } deltas keyed to numbered pins and verified by pixel-diff against the captured target.",
+  "surfaces": {
+    "human": "Live visual editor (CDP picker + inspector panel + numbered pin overlay).",
+    "llm": "Annotation set (per-pin CSS/text deltas) + target screenshot → reproduce in source."
+  },
+  "ipc": {
+    "start": "visual-edit:start { tabId } -> { sessionId, pins }",
+    "listPins": "visual-edit:listPins { sessionId } -> { pins }",
+    "applyEdit": "visual-edit:applyEdit { sessionId, n, change } -> { ok, annotation }",
+    "setNote": "visual-edit:setNote { sessionId, n, note } -> { ok }",
+    "removePin": "visual-edit:removePin { sessionId, n } -> { ok, pins }",
+    "pausePicking": "visual-edit:pausePicking { sessionId } -> ok",
+    "resumePicking": "visual-edit:resumePicking { sessionId } -> ok",
+    "setMode": "visual-edit:setMode { sessionId, mode } -> ok   (mode: pick | comment | rect | pen | off)",
+    "buildEditTask": "visual-edit:buildEditTask { sessionId } -> { targetScreenshot, annotations, url }",
+    "end": "visual-edit:end { sessionId } -> { ok }"
+  },
+  "events": [
+    "visual-edit:pin-added",
+    "visual-edit:pin-selected",
+    "visual-edit:pin-detached",
+    "visual-edit:renumbered",
+    "visual-edit:reset"
+  ],
+  "verification": {
+    "oracle": "playwright pixel-diff (pixelmatch) of the source render vs the captured target screenshot",
+    "runsIn": "user workspace via the chat agent's Playwright MCP access (AIIDE_MCP_PORT)",
+    "recipe": "visual-edit/verify.js"
+  }
+}

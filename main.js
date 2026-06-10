@@ -6,6 +6,7 @@ const fs = require('fs');
 const { TabManager, TAB_SCROLLBAR_CSS } = require('./tab-manager');
 const mcpServer = require('./mcp-server');
 const { TunnelManager } = require('./tunnel-manager');
+const { VisualEdit } = require('./visual-edit');
 
 const DBG = path.join(__dirname, 'debug.log');
 const dbg = (...args) => fs.appendFileSync(DBG, `[${new Date().toISOString()}] ${args.join(' ')}\n`);
@@ -220,6 +221,16 @@ let connectWindow = null;
 // the existing WebContentsView children attached to whichever window is live.
 const tabManager = new TabManager(() => mainWindow, dbg);
 
+// Visual-edit platform tool. Attaches a CDP debugger to a tab's
+// WebContentsView to drive the live picker + inspector preview agent, and
+// builds the agent task (target screenshot + per-pin annotation deltas).
+// Registers the `visual-edit:*` IPC surface on construction.
+const visualEdit = new VisualEdit({
+  getOwnerWindow: () => mainWindow,
+  getWebContents: (tabId) => tabManager.getWebContents(tabId),
+  dbg,
+});
+
 // Phase 6 — automated reverse SSH tunnel to the user's EC2 workspace.
 // Started after a successful sign-in (deep link or restored config),
 // stopped on sign-out / app quit. Token + platformUrl are read from
@@ -305,6 +316,29 @@ function createMainWindow(workspaceUrl) {
     if (isMainFrame && !isSameDocument) tabManager.destroyAll();
   });
 
+  // Hijack guard. The main window hosts the workspace shell and must NEVER be
+  // navigated away from the workspace origin. A link/button inside the page
+  // that targets the top frame (instead of window.open, which the handler
+  // below catches) would otherwise replace the ENTIRE UI with that site and —
+  // via the orphan-view guard above — tear down every tab. Observed in the
+  // wild: a click sent the whole window to an external marketing page, leaving
+  // "nothing else" loading. Block any cross-origin top-level navigation and
+  // route it into a workspace tab instead, exactly like a popup. Same-origin
+  // navigations (the SPA navigating within itself, auth redirects on the
+  // workspace host) pass through. loadURL()/reload()/back-forward don't fire
+  // will-navigate, so our own programmatic loads are unaffected.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (/^(about|chrome|devtools|data):/.test(url)) return;
+    const home = readConfig().workspaceUrl || mainWindow.webContents.getURL();
+    let sameOrigin = false;
+    try { sameOrigin = new URL(url).origin === new URL(home).origin; } catch { /* keep false */ }
+    if (sameOrigin) return;
+    event.preventDefault();
+    dbg('will-navigate blocked top-level main-window nav to ' + url + ' — routing to tab');
+    const label = (() => { try { return new URL(url).hostname || url; } catch { return url; } })();
+    mainWindow.webContents.send('open-tab', { url, label });
+  });
+
   // Force our chrome theme onto the remotely-served workspace UI: themed
   // scrollbars + the pro tab-strip/toolbar restyle (AI-bot accent on the
   // active tab & selected tool, hover-only close, modern + button). Done
@@ -386,6 +420,7 @@ function createMainWindow(workspaceUrl) {
     mainWindow = null;
     // Sign-out → reconnect creates a fresh window/renderer; any surviving
     // views would orphan into the new session. Tear them down.
+    void visualEdit.destroyAll();
     tabManager.destroyAll();
   });
   buildAppMenu();
@@ -596,6 +631,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', async () => {
   // Drop every WebContentsView so we don't leak page targets past shutdown.
+  await visualEdit.destroyAll().catch(() => {});
   tabManager.destroyAll();
   await tunnelManager.stop().catch(() => {});
   if (mcpEnabled) await mcpServer.stop({ dbg }).catch(() => {});
