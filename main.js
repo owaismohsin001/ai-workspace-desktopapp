@@ -8,8 +8,21 @@ const mcpServer = require('./mcp-server');
 const { TunnelManager } = require('./tunnel-manager');
 const { VisualEdit } = require('./visual-edit');
 
-const DBG = path.join(__dirname, 'debug.log');
-const dbg = (...args) => fs.appendFileSync(DBG, `[${new Date().toISOString()}] ${args.join(' ')}\n`);
+// Log to a writable location. In a packaged app __dirname lives inside the
+// read-only app.asar, so writing debug.log there throws ENOENT and crashes the
+// app on the very first dbg() call. userData is always writable. Logging must
+// never be fatal, so swallow any error.
+const DBG = path.join(app.getPath('userData'), 'debug.log');
+let dbgDirReady = false;
+const dbg = (...args) => {
+  try {
+    if (!dbgDirReady) {
+      fs.mkdirSync(path.dirname(DBG), { recursive: true });
+      dbgDirReady = true;
+    }
+    fs.appendFileSync(DBG, `[${new Date().toISOString()}] ${args.join(' ')}\n`);
+  } catch { /* never let logging crash the app */ }
+};
 
 // App icon shown in the taskbar / window chrome (dev + packaged). Windows
 // prefers the .ico; everywhere else the PNG renders fine.
