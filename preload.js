@@ -32,6 +32,17 @@ contextBridge.exposeInMainWorld('__AIIDE__', {
   isElectron: true,
   electronVersion: process.versions.electron,
 
+  // ── App-level actions ──────────────────────────────────────────────
+  // disconnect() tears down the workspace session (stops the tunnel,
+  // wipes config.json, closes the main window) and brings the user back
+  // to the connect/login screen. Wired to the profile-dropdown Logout.
+  app: {
+    disconnect: () => ipcRenderer.invoke('app:disconnect'),
+    // Injected shell poller calls this once the workspace UI has mounted,
+    // so the main process can drop the loading splash + reveal the window.
+    shellReady: () => ipcRenderer.send('workspace:shell-ready'),
+  },
+
   // ── Popup → tab routing ────────────────────────────────────────────
   // Main process sends 'open-tab' when a window.open() popup inside a tab
   // should be re-routed into a workspace tab (instead of staying a

@@ -105,58 +105,12 @@
     .btn-primary:hover { background: var(--accent-hover); }
     .btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
 
-    /* ── Divider ── */
-    .divider {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin: 20px 0;
-      color: #333;
-      font-size: 12px;
-    }
-    .divider::before, .divider::after {
-      content: '';
-      flex: 1;
-      height: 1px;
-      background: #222;
-    }
-
-    /* ── Manual section ── */
-    .manual-section { display: flex; flex-direction: column; gap: 10px; }
-    .input-row { display: flex; gap: 8px; }
-    .manual-input {
-      flex: 1;
-      background: #151515;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      color: var(--text);
-      font-size: 13px;
-      padding: 9px 11px;
-      outline: none;
-      transition: border-color 0.15s;
-    }
-    .manual-input:focus { border-color: var(--border-focus); }
-    .manual-input::placeholder { color: #444; }
-    .btn-connect-manual {
-      background: transparent;
-      border: 1px solid var(--border-focus);
-      color: var(--accent);
-      padding: 9px 14px;
-      border-radius: var(--radius);
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: background 0.15s;
-    }
-    .btn-connect-manual:hover { background: rgba(124,58,237,0.1); }
-    .btn-connect-manual:disabled { opacity: 0.5; cursor: not-allowed; }
-
     /* ── Feedback messages ── */
     .msg {
       border-radius: 6px;
       font-size: 13px;
       padding: 9px 12px;
+      margin-top: 16px;
       text-align: center;
       display: none;
     }
@@ -207,7 +161,7 @@
     </div>
 
     <h1>Connect Your Workspace</h1>
-    <p class="sub">Sign in with the platform to link your workspace,<br>or enter a workspace URL directly.</p>
+    <p class="sub">Sign in with the platform to link your workspace.</p>
 
     <!-- ── Platform sign-in ── -->
     <div class="platform-section">
@@ -225,31 +179,13 @@
       </button>
     </div>
 
-    <div class="divider">or enter workspace URL</div>
-
-    <!-- ── Manual URL entry ── -->
-    <div class="manual-section">
-      <div class="input-row">
-        <input
-          id="workspaceUrl"
-          class="manual-input"
-          type="url"
-          placeholder="http://your-server:3000"
-          spellcheck="false"
-        />
-        <button id="manualBtn" class="btn-connect-manual" type="button">Connect</button>
-      </div>
-    </div>
-
     <div id="msg" class="msg"></div>
   </div>
 
   <script>
     const connect = window.__AIIDE_CONNECT__;
     const signInBtn = document.getElementById('signInBtn');
-    const manualBtn = document.getElementById('manualBtn');
     const platformInput = document.getElementById('platformUrl');
-    const workspaceInput = document.getElementById('workspaceUrl');
     const msg = document.getElementById('msg');
 
     function showMsg(text, type) {
@@ -286,32 +222,9 @@
       showMsg('Browser opened — sign in, then the app will connect automatically.', 'info');
     });
 
-    // ── Manual URL entry ──
-    manualBtn.addEventListener('click', async () => {
-      const url = workspaceInput.value.trim();
-      if (!url) {
-        showMsg('Enter a workspace URL.', 'error');
-        return;
-      }
-      clearMsg();
-      manualBtn.disabled = true;
-      manualBtn.textContent = 'Connecting…';
-
-      const result = await connect.connectManual(url);
-      if (result && result.error) {
-        showMsg(result.error, 'error');
-        manualBtn.disabled = false;
-        manualBtn.textContent = 'Connect';
-      }
-      // On success the main process closes this window and opens the workspace.
-    });
-
-    // Allow Enter key on URL inputs.
+    // Allow Enter key on the platform URL input.
     platformInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') signInBtn.click();
-    });
-    workspaceInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') manualBtn.click();
     });
   </script>
 </body>

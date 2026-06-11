@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>AI Workspace</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: radial-gradient(circle at 50% 44%, #16131d, #0a090e 72%);
+    -webkit-user-select: none; user-select: none; cursor: default;
+  }
+
+  /* ============================================================
+     Animated AI Bot — verbatim from the chat-panel empty-state
+     mascot (frontend layout.css) so the splash matches exactly.
+     ============================================================ */
+  .bot-stage {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 24px 12px; overflow: hidden;
+  }
+  .bot-glow {
+    position: absolute; top: 50%; left: 50%;
+    width: min(260px, 80%); height: min(260px, 80%);
+    transform: translate(-50%, -50%);
+    background: rgba(139, 92, 246, 0.2); border-radius: 50%;
+    filter: blur(60px); pointer-events: none;
+    animation: botGlowPulse 4s ease-in-out infinite;
+  }
+  @keyframes botGlowPulse {
+    0%, 100% { opacity: 0.6; transform: translate(-50%, -50%) scale(1); }
+    50%      { opacity: 1;   transform: translate(-50%, -50%) scale(1.15); }
+  }
+  .bot-orbit { position: absolute; top: 50%; left: 50%; border-radius: 50%; pointer-events: none; }
+  .bot-orbit-1 {
+    width: min(200px, 72%); height: min(200px, 72%);
+    border: 1px solid rgba(139, 92, 246, 0.28);
+    transform: translate(-50%, -50%); animation: botSpin 18s linear infinite;
+  }
+  .bot-orbit-2 {
+    width: min(260px, 88%); height: min(260px, 88%);
+    border: 1px solid rgba(34, 211, 238, 0.18);
+    transform: translate(-50%, -50%); animation: botSpinReverse 22s linear infinite;
+  }
+  @keyframes botSpin {
+    from { transform: translate(-50%, -50%) rotate(0deg); }
+    to   { transform: translate(-50%, -50%) rotate(360deg); }
+  }
+  @keyframes botSpinReverse {
+    from { transform: translate(-50%, -50%) rotate(360deg); }
+    to   { transform: translate(-50%, -50%) rotate(0deg); }
+  }
+  .bot-particle {
+    position: absolute; width: 4px; height: 4px; border-radius: 50%;
+    background: #a78bfa; opacity: 0;
+    animation: botParticle 6s linear infinite; pointer-events: none;
+  }
+  @keyframes botParticle {
+    0%   { transform: translateY(0)     scale(0.6); opacity: 0; }
+    35%  {                                          opacity: 0.85; }
+    100% { transform: translateY(-90px) scale(1.2); opacity: 0; }
+  }
+  .bot-frame {
+    position: relative; width: 110px; height: 110px;
+    display: flex; align-items: center; justify-content: center;
+    animation: botFloat 4s ease-in-out infinite, botTilt 11s ease-in-out infinite;
+  }
+  @keyframes botFloat {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-10px); }
+  }
+  @keyframes botTilt {
+    0%, 70%, 100% { }
+    78%           { transform: translateY(-8px) rotate(-8deg); }
+    86%           { transform: translateY(-8px) rotate(8deg); }
+    94%           { transform: translateY(-4px) rotate(0deg); }
+  }
+  .bot-halo {
+    position: absolute; inset: -16px;
+    background: rgba(139, 92, 246, 0.4); border-radius: 50%;
+    filter: blur(24px); opacity: 0.45; z-index: 0;
+    animation: botGlowPulse 4s ease-in-out infinite;
+  }
+  .bot-ping {
+    position: absolute; inset: -12px;
+    border: 1px solid rgba(34, 211, 238, 0.5); border-radius: 50%;
+    animation: botPing 2.4s cubic-bezier(0, 0, 0.2, 1) infinite; z-index: 0;
+  }
+  @keyframes botPing {
+    0%   { transform: scale(1);    opacity: 1; }
+    80%  { transform: scale(1.45); opacity: 0; }
+    100% { transform: scale(1.45); opacity: 0; }
+  }
+  .bot-body {
+    position: relative; width: 88px; height: 88px; border-radius: 22px;
+    background: linear-gradient(135deg, #6D28D9 0%, #4C1D95 100%);
+    box-shadow: 0 0 40px rgba(139, 92, 246, 0.55);
+    display: flex; align-items: center; justify-content: center; z-index: 1;
+  }
+  .bot-antenna {
+    position: absolute; top: -22px; left: 50%; transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center;
+    animation: botAntenna 7s ease-in-out infinite; transform-origin: bottom center;
+  }
+  @keyframes botAntenna {
+    0%, 60%, 100% { transform: translateX(-50%) rotate(0deg); }
+    68%           { transform: translateX(-50%) rotate(-22deg); }
+    76%           { transform: translateX(-50%) rotate(22deg); }
+    84%           { transform: translateX(-50%) rotate(-10deg); }
+    92%           { transform: translateX(-50%) rotate(0deg); }
+  }
+  .bot-antenna-stem { width: 2px; height: 16px; background: #a78bfa; border-radius: 2px; }
+  .bot-antenna-bulb {
+    width: 10px; height: 10px; border-radius: 50%; background: #c4b5fd;
+    box-shadow: 0 0 14px rgba(196, 181, 253, 0.95);
+    animation: botGlowPulse 1.8s ease-in-out infinite;
+  }
+  .bot-eyes { display: flex; gap: 14px; align-items: center; }
+  .bot-eye {
+    width: 22px; height: 22px; border-radius: 50%; background: #FFF6C9;
+    box-shadow: 0 0 14px rgba(255, 246, 201, 0.7);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .bot-pupil {
+    width: 9px; height: 9px; border-radius: 50%; background: #4C1D95;
+    animation: botBlink 4s infinite;
+  }
+  @keyframes botBlink {
+    0%, 43%, 53%, 100% { transform: scaleY(1); }
+    46%, 50%           { transform: scaleY(0.1); }
+  }
+  .bot-ear {
+    position: absolute; top: 50%; width: 12px; height: 36px;
+    background: #4C1D95; box-shadow: 0 0 12px rgba(76, 29, 149, 0.6);
+    animation: botEarSplit 8s ease-in-out infinite;
+  }
+  .bot-ear-left  { left: -10px;  border-radius: 8px 0 0 8px; transform: translateY(-50%); }
+  .bot-ear-right { right: -10px; border-radius: 0 8px 8px 0; transform: translateY(-50%); animation-direction: reverse; }
+  @keyframes botEarSplit {
+    0%, 55%, 100% { margin-left: 0;    margin-right: 0; }
+    65%           { margin-left: -8px; margin-right: -8px; }
+    75%           { margin-left: -4px; margin-right: -4px; }
+    85%           { margin-left: 0;    margin-right: 0; }
+  }
+  .bot-shadow {
+    position: absolute; bottom: -16px; left: 50%;
+    width: 80px; height: 10px; background: rgba(76, 29, 149, 0.55);
+    border-radius: 50%; filter: blur(10px); transform: translateX(-50%);
+    animation: botShadowPulse 4s ease-in-out infinite;
+  }
+  @keyframes botShadowPulse {
+    0%, 100% { transform: translateX(-50%) scale(1);    opacity: 0.5; }
+    50%      { transform: translateX(-50%) scale(0.75); opacity: 0.25; }
+  }
+
+  /* ── Shutdown mode (body.shutdown) ──────────────────────────────── */
+  body.shutdown .bot-orbit,
+  body.shutdown .bot-particle,
+  body.shutdown .bot-ping,
+  body.shutdown .bot-glow,
+  body.shutdown .bot-halo { opacity: 0 !important; transition: opacity 0.5s ease; }
+  body.shutdown .bot-frame { animation: botPowerDown 1.15s cubic-bezier(0.5, 0, 0.7, 0.2) forwards; }
+  body.shutdown .bot-pupil,
+  body.shutdown .bot-eye { animation: botEyesOut 0.5s ease forwards; }
+  @keyframes botPowerDown {
+    0%   { transform: translateY(0) scale(1); }
+    55%  { transform: translateY(0) scale(1.05); }
+    100% { transform: translateY(10px) scale(0.14); opacity: 0.2; }
+  }
+  @keyframes botEyesOut {
+    0%   { transform: scaleY(1); }
+    100% { transform: scaleY(0.08); }
+  }
+</style>
+</head>
+<body>
+  <div class="bot-stage" aria-hidden="true">
+    <div class="bot-glow"></div>
+    <div class="bot-orbit bot-orbit-1"></div>
+    <div class="bot-orbit bot-orbit-2"></div>
+    <span class="bot-particle" style="top: 5%; left: 5%; animation-delay: 0s;"></span>
+    <span class="bot-particle" style="top: 46%; left: 58%; animation-delay: 0.55s;"></span>
+    <span class="bot-particle" style="top: 87%; left: 21%; animation-delay: 1.1s;"></span>
+    <span class="bot-particle" style="top: 38%; left: 74%; animation-delay: 1.65s;"></span>
+    <span class="bot-particle" style="top: 79%; left: 37%; animation-delay: 2.2s;"></span>
+    <span class="bot-particle" style="top: 30%; left: 90%; animation-delay: 2.75s;"></span>
+    <span class="bot-particle" style="top: 71%; left: 53%; animation-delay: 3.3s;"></span>
+    <span class="bot-particle" style="top: 22%; left: 16%; animation-delay: 0s;"></span>
+    <span class="bot-particle" style="top: 63%; left: 69%; animation-delay: 0.55s;"></span>
+    <span class="bot-particle" style="top: 14%; left: 32%; animation-delay: 1.1s;"></span>
+    <span class="bot-particle" style="top: 55%; left: 85%; animation-delay: 1.65s;"></span>
+    <span class="bot-particle" style="top: 6%; left: 48%; animation-delay: 2.2s;"></span>
+    <div class="bot-frame">
+      <div class="bot-halo"></div>
+      <div class="bot-ping"></div>
+      <div class="bot-body">
+        <div class="bot-antenna"><div class="bot-antenna-stem"></div><div class="bot-antenna-bulb"></div></div>
+        <div class="bot-eyes"><div class="bot-eye"><div class="bot-pupil"></div></div><div class="bot-eye"><div class="bot-pupil"></div></div></div>
+        <div class="bot-ear bot-ear-left"></div>
+        <div class="bot-ear bot-ear-right"></div>
+      </div>
+      <div class="bot-shadow"></div>
+    </div>
+  </div>
+  <script>
+    if (new URLSearchParams(location.search).get('mode') === 'shutdown') {
+      document.body.classList.add('shutdown');
+    }
+  </script>
+</body>
+</html>

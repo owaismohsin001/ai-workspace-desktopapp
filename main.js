@@ -109,7 +109,112 @@ const CHROME_THEME_CSS = `
     background: color-mix(in srgb, var(--bot-accent) 32%, transparent) !important;
     color: var(--vsc-text-emphasis) !important;
   }
+  /* Profile avatar: pin the editor-toolbar one to the far-left of the
+     window and drop the duplicate one in the chat-session tab strip. */
+  .editor-overlay-toolbar .profile-avatar-btn {
+    position: fixed !important;
+    left: 8px !important;
+    top: 4px !important;
+    z-index: 99999 !important;
+    order: -1 !important;
+    margin: 0 !important;
+  }
+  .chat-session-tabs .profile-avatar-btn { display: none !important; }
 `;
+
+// Shell-side enhancements injected into the (remotely-served) workspace
+// document on every load. Three pieces, all idempotent via window flags:
+//
+//  1. Shell-ready signal — tells the main process (which is showing the
+//     animated-bot loading splash window) that the workspace UI has
+//     mounted, so the splash can drop and the real window appear. The
+//     user never sees the remote frontend's plain "Loading workspace…".
+//  2. Profile-dropdown coordinator. Native WebContentsView tabs always
+//     paint above the main-window DOM, so the .profile-dropdown (a main-
+//     shell overlay) gets covered on any tab with live content. We DON'T
+//     shift or blank the tab: on open we paint a frozen screenshot of the
+//     tab (via tab.capture) at the same bounds and hide the live view, so
+//     the dropdown overlays cleanly; on close we drop the image and show
+//     the view again.
+//  3. Logout wiring: the .profile-dropdown-item.logout button drives the
+//     animated desktop disconnect (app:disconnect → shutdown splash →
+//     back to connect screen).
+const SHELL_ENHANCEMENTS_JS = `(() => {
+  const api = window.__AIIDE__ && window.__AIIDE__.tab;
+  const appApi = window.__AIIDE__ && window.__AIIDE__.app;
+
+  // ── 1. Signal shell-ready so the loading splash can drop ──────────
+  if (!window.__aiideShellReadySignalled) {
+    const fire = () => {
+      if (window.__aiideShellReadySignalled) return true;
+      if (document.querySelector('.editor-overlay-toolbar') ||
+          document.querySelector('.chat-session-tabs')) {
+        window.__aiideShellReadySignalled = true;
+        try { appApi && appApi.shellReady(); } catch (e) {}
+        return true;
+      }
+      return false;
+    };
+    if (!fire()) {
+      const poll = setInterval(() => { if (fire()) clearInterval(poll); }, 150);
+      setTimeout(() => clearInterval(poll), 30000);
+    }
+  }
+
+  if (!api) return;
+
+  // ── 2. Profile-dropdown coordinator (frozen screenshot, no shift) ──
+  if (!window.__aiideProfileDropdownFix) {
+    window.__aiideProfileDropdownFix = true;
+    let frozen = null; // { tabId, el }
+    const restore = () => {
+      if (!frozen) return;
+      const f = frozen; frozen = null;
+      try { if (f.el && f.el.parentNode) f.el.remove(); } catch (e) {}
+      try { api.setVisible(f.tabId, true); } catch (e) {}
+    };
+    const apply = () => {
+      if (frozen) return;
+      if (!document.querySelector('.profile-dropdown')) return;
+      Promise.resolve(api.list()).then((info) => {
+        const id = info && info.activeTabId;
+        if (id == null) return;
+        const t = (info.tabs || []).find((x) => x.tabId === id);
+        const b = t && t.bounds;
+        if (!b || !document.querySelector('.profile-dropdown')) return;
+        return Promise.resolve(api.capture(id)).then((cap) => {
+          if (frozen || !cap || !cap.dataUrl) return;
+          if (!document.querySelector('.profile-dropdown')) return;
+          const img = document.createElement('div');
+          img.id = 'aiide-tab-freeze';
+          img.style.cssText = 'position:fixed;left:' + b.x + 'px;top:' + b.y +
+            'px;width:' + b.width + 'px;height:' + b.height + 'px;z-index:8000;' +
+            'background:center/cover no-repeat #0a0a0a;pointer-events:none;' +
+            'background-image:url(' + cap.dataUrl + ')';
+          document.body.appendChild(img);
+          frozen = { tabId: id, el: img };
+          try { api.setVisible(id, false); } catch (e) { restore(); }
+        });
+      }).catch(() => {});
+    };
+    const obs = new MutationObserver(() => {
+      if (document.querySelector('.profile-dropdown')) apply(); else restore();
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ── 3. Logout → animated desktop disconnect ───────────────────────
+  if (appApi && !window.__aiideLogoutWired) {
+    window.__aiideLogoutWired = true;
+    document.addEventListener('click', (e) => {
+      const btn = e.target && e.target.closest && e.target.closest('.profile-dropdown-item.logout');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      try { appApi.disconnect(); } catch (err) {}
+    }, true);
+  }
+})();`;
 
 // Hosts that actively detect + refuse iframe embedding (payment, OAuth, banks).
 // These open in their own BrowserWindow instead of a workspace tab.
@@ -291,6 +396,60 @@ function createConnectWindow() {
   connectWindow.setMenu(null);
 }
 
+// â”€â”€ Loading / shutdown splash â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// A frameless, always-on-top window rendering the animated bot (loading.html).
+// Sits over the main window's spot during workspace load (so the remote
+// "Loading workspace…" text is never seen) and during logout (mode=shutdown
+// plays a power-down animation so the shutdown is obvious).
+
+let splashWindow = null;
+
+function showSplashWindow(bounds, mode) {
+  try {
+    if (splashWindow && !splashWindow.isDestroyed()) { return; }
+    const b = bounds || {};
+    splashWindow = new BrowserWindow({
+      x: b.x, y: b.y,
+      width: b.width || 1440,
+      height: b.height || 900,
+      frame: false,
+      resizable: false,
+      movable: false,
+      skipTaskbar: true,
+      focusable: false,
+      alwaysOnTop: true,
+      backgroundColor: '#0b0a0f',
+      title: 'AI Workspace',
+      icon: APP_ICON,
+      show: false,
+      webPreferences: { contextIsolation: true, nodeIntegration: false },
+    });
+    splashWindow.loadFile(path.join(__dirname, 'loading.html'),
+      mode === 'shutdown' ? { search: 'mode=shutdown' } : undefined);
+    splashWindow.once('ready-to-show', () => {
+      if (splashWindow && !splashWindow.isDestroyed()) splashWindow.showInactive();
+    });
+    splashWindow.on('closed', () => { splashWindow = null; });
+  } catch (e) { dbg('showSplashWindow failed: ' + e.message); }
+}
+
+function closeSplashWindow() {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    try { splashWindow.close(); } catch { /* already gone */ }
+  }
+  splashWindow = null;
+}
+
+// Animated logout: power-down splash, then tear down the session.
+function logoutWithAnimation() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    showSplashWindow(mainWindow.getBounds(), 'shutdown');
+    setTimeout(() => { disconnectWorkspace(); closeSplashWindow(); }, 1400);
+  } else {
+    disconnectWorkspace();
+  }
+}
+
 // â”€â”€ Main workspace window â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function createMainWindow(workspaceUrl) {
@@ -326,7 +485,12 @@ function createMainWindow(workspaceUrl) {
   // Attached before loadURL so it catches the initial nav too; the initial
   // call is a harmless no-op because the registry is empty.
   mainWindow.webContents.on('did-start-navigation', (_e, _url, isSameDocument, isMainFrame) => {
-    if (isMainFrame && !isSameDocument) tabManager.destroyAll();
+    if (isMainFrame && !isSameDocument) {
+      tabManager.destroyAll();
+      // Reload/re-sign-in: cover the reloading shell (and its "Loading
+      // workspace…" text) with the bot splash until shell-ready re-fires.
+      if (mainWindow && !mainWindow.isDestroyed()) showSplashWindow(mainWindow.getBounds());
+    }
   });
 
   // Hijack guard. The main window hosts the workspace shell and must NEVER be
@@ -366,12 +530,24 @@ function createMainWindow(workspaceUrl) {
     wc.insertCSS(CHROME_THEME_CSS).catch((err) =>
       dbg('insertCSS chrome theme failed: ' + err.message)
     );
+    wc.executeJavaScript(SHELL_ENHANCEMENTS_JS, true).catch((err) =>
+      dbg('shell enhancements inject failed: ' + err.message)
+    );
   });
 
+  // Animated-bot loading splash. A frameless window sits over the main
+  // window's spot until the workspace SHELL is ready (the injected poller
+  // fires 'workspace:shell-ready' via __AIIDE__.app.shellReady()), so the
+  // user never sees the remote frontend's plain "Loading workspace…" text
+  // — only our bot. ready-to-show fires at first paint (= that text), so we
+  // deliberately do NOT reveal the main window there; the global
+  // 'workspace:shell-ready' handler (registered once below) does.
+  showSplashWindow(mainWindow.getBounds());
   mainWindow.loadURL(workspaceUrl);
-  const showMain = () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show(); };
-  mainWindow.once('ready-to-show', showMain);
-  setTimeout(showMain, 3000);
+  setTimeout(() => { // hard fallback if the shell never signals ready
+    closeSplashWindow();
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) mainWindow.show();
+  }, 25000);
 
   // Desktop-app window-open policy:
   //   Internal URLs (about:, chrome:, devtools:) → drop silently.
@@ -477,6 +653,32 @@ function handleDeepLink(url) {
   }
 }
 
+// â”€â”€ Disconnect / logout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Single source of truth for tearing down the workspace session and
+// returning to the connect screen. Used by the File ▸ Disconnect menu,
+// the Ctrl+Shift+D accelerator, and the profile-dropdown Logout button
+// (via the app:disconnect IPC).
+
+function disconnectWorkspace() {
+  // Phase 6 — kill the tunnel + drop the bearer token before we wipe the
+  // workspace URL. Otherwise the next launch would try to spin a tunnel
+  // against the prior user's EC2 with their (no-longer-valid) token.
+  void tunnelManager.stop();
+  clearConfig();
+  if (mainWindow) { mainWindow.close(); }
+  createConnectWindow();
+}
+
+ipcMain.handle('app:disconnect', () => { logoutWithAnimation(); });
+
+// Injected shell poller fires this once the workspace UI has mounted. Close
+// the loading splash and reveal the main window (first load) — on reloads
+// the main window is already visible, so this just drops the splash.
+ipcMain.on('workspace:shell-ready', () => {
+  closeSplashWindow();
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) mainWindow.show();
+});
+
 // â”€â”€ Application menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function buildAppMenu() {
@@ -487,16 +689,7 @@ function buildAppMenu() {
         {
           label: 'Disconnect Workspace',
           accelerator: process.platform === 'darwin' ? 'Cmd+Shift+D' : 'Ctrl+Shift+D',
-          click() {
-            // Phase 6 — kill the tunnel + drop the bearer token before we
-            // wipe the workspace URL. Otherwise the next launch would try
-            // to spin a tunnel against the prior user's EC2 with their
-            // (no-longer-valid) token.
-            void tunnelManager.stop();
-            clearConfig();
-            if (mainWindow) { mainWindow.close(); }
-            createConnectWindow();
-          },
+          click() { logoutWithAnimation(); },
         },
         { type: 'separator' },
         process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' },
