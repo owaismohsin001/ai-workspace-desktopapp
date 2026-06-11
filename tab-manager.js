@@ -174,6 +174,29 @@ class TabManager {
       return { action: 'deny' };
     });
 
+    // Cross-site navigation guard. Any attempt to send THIS tab to a different
+    // site (link click, redirect, or JS like `window.location = ...`) opens a
+    // NEW tab instead of replacing what the user was on. Same-host and same-
+    // registrable-domain (workspace subdomains) navigations proceed normally.
+    // This is the backstop that makes "go to <external site>" non-destructive
+    // no matter how it's triggered — the AI agent can run arbitrary JS
+    // (browser_evaluate / run_code), so blocking individual tools can't.
+    wc.on('will-navigate', (e, targetUrl) => {
+      let cur, tgt;
+      try { cur = new URL(wc.getURL()); tgt = new URL(targetUrl); } catch { return; }
+      if (!/^https?:$/.test(tgt.protocol)) return; // non-web schemes: leave alone
+      if (!cur.host) return;                       // fresh/blank tab: allow first load
+      if (cur.host === tgt.host) return;           // same host: SPA / in-app nav
+      const site = (h) => h.split('.').slice(-2).join('.');
+      if (site(cur.host) === site(tgt.host)) return; // same workspace domain
+      e.preventDefault();
+      const owner = this.getOwnerWindow();
+      if (owner && !owner.isDestroyed()) {
+        owner.webContents.send('open-tab', { url: targetUrl, label: tgt.hostname });
+      }
+      this.dbg(`will-navigate: blocked cross-site ${cur.host} -> ${tgt.host}; opened new tab`);
+    });
+
     const owner = this.getOwnerWindow();
     if (owner && !owner.isDestroyed()) {
       owner.contentView.addChildView(view);

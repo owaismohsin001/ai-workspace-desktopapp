@@ -1,6 +1,6 @@
 {
   "name": "ai-ide-desktop",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "AI Workspace – Desktop",
   "main": "main.js",
   "scripts": {
@@ -25,7 +25,7 @@
       "start.js",
       "tab-manager.js",
       "mcp-server.js",
-      "tunnel-manager.js",
+      "mesh-manager.js",
       "preload.js",
       "preload-connect.js",
       "preload-tab.js",
@@ -45,14 +45,32 @@
       "target": [
         "nsis"
       ],
-      "icon": "assets/icon.ico"
+      "icon": "assets/icon.ico",
+      "extraResources": [
+        {
+          "from": "vendor/tailscale/win/${arch}",
+          "to": "tailscale"
+        }
+      ]
+    },
+    "nsis": {
+      "include": "build/installer.nsh",
+      "perMachine": true,
+      "allowElevation": true,
+      "artifactName": "AI-Workspace-Setup-${version}.${ext}"
     },
     "mac": {
       "target": [
         "dmg"
       ],
       "icon": "assets/icon.png",
-      "category": "public.app-category.developer-tools"
+      "category": "public.app-category.developer-tools",
+      "extraResources": [
+        {
+          "from": "vendor/tailscale/mac/${arch}",
+          "to": "tailscale"
+        }
+      ]
     },
     "linux": {
       "target": [
@@ -60,7 +78,13 @@
         "deb"
       ],
       "icon": "assets/icon.png",
-      "category": "Development"
+      "category": "Development",
+      "extraResources": [
+        {
+          "from": "vendor/tailscale/linux/${arch}",
+          "to": "tailscale"
+        }
+      ]
     }
   },
   "dependencies": {

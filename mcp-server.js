@@ -27,6 +27,7 @@ const http = require('node:http');
 
 let activeCapabilities = null;
 let activeCdpPort = null;
+let activeOutputDir = null;
 let activeDbg = () => {};
 let httpServer = null;
 let createConnectionFn = null;     // resolved from @playwright/mcp
@@ -36,7 +37,7 @@ let randomUUIDFn = null;
 /** @type {Map<string, { server: any, transport: any }>} */
 const sessions = new Map();
 
-async function start({ mcpPort, cdpPort, dbg }) {
+async function start({ mcpPort, cdpPort, dbg, outputDir }) {
   if (!mcpPort) return null;
   if (!cdpPort) {
     dbg('mcp-server: AIIDE_MCP_PORT set but AIIDE_CDP_PORT is not; refusing to start');
@@ -59,6 +60,11 @@ async function start({ mcpPort, cdpPort, dbg }) {
   ];
   activeCdpPort = cdpPort;
   activeDbg = dbg ?? (() => {});
+  // @playwright/mcp defaults its output dir to <cwd>/.playwright-mcp. In the
+  // packaged app the cwd is the (read-only) install dir under Program Files, so
+  // screenshots/snapshots fail with EPERM on mkdir. Force a writable location.
+  activeOutputDir = outputDir
+    || require('node:path').join(require('node:os').tmpdir(), 'ai-ide-playwright-mcp');
 
   httpServer = http.createServer(handleRequest);
   await new Promise((resolve) => httpServer.listen(mcpPort, '127.0.0.1', resolve));
@@ -145,6 +151,7 @@ async function spawnSession() {
     browser: { cdpEndpoint: `http://127.0.0.1:${activeCdpPort}` },
     capabilities: activeCapabilities,
     sharedBrowserContext: true,
+    outputDir: activeOutputDir,
   });
 
   const entry = { server, transport };

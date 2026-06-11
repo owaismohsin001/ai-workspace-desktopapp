@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { TabManager, TAB_SCROLLBAR_CSS } = require('./tab-manager');
 const mcpServer = require('./mcp-server');
-const { TunnelManager } = require('./tunnel-manager');
+const { MeshManager } = require('./mesh-manager');
 const { VisualEdit } = require('./visual-edit');
 
 // Log to a writable location. In a packaged app __dirname lives inside the
@@ -349,23 +349,34 @@ const visualEdit = new VisualEdit({
   dbg,
 });
 
-// Phase 6 — automated reverse SSH tunnel to the user's EC2 workspace.
-// Started after a successful sign-in (deep link or restored config),
-// stopped on sign-out / app quit. Token + platformUrl are read from
-// config.json; refreshes get written back via setToken.
-const tunnelManager = new TunnelManager({
+// Headscale mesh link to the user's EC2 workspace (replaces the old reverse
+// SSH tunnel). Started after a successful sign-in (deep link or restored
+// config), stopped on sign-out / app quit. Token + platformUrl are read from
+// config.json; refreshes get written back via setToken. The 'tunnel:*' IPC
+// channel names are kept for the renderer's status indicator.
+const meshManager = new MeshManager({
   getToken: () => readConfig().desktopToken ?? null,
   setToken: (t) => writeConfig({ desktopToken: t }),
   getPlatformUrl: () => readConfig().platformUrl ?? PLATFORM_URL,
+  getUserDataPath: () => app.getPath('userData'),
+  // Bundled tailscale/tailscaled binaries. Packaged: shipped via
+  // electron-builder extraResources into <resources>/tailscale. Dev: read
+  // from the repo's vendor/ tree, picked by platform + arch.
+  getBinDir: () => {
+    if (app.isPackaged) return path.join(process.resourcesPath, 'tailscale');
+    const plat = process.platform === 'win32' ? 'win'
+      : process.platform === 'darwin' ? 'mac' : 'linux';
+    return path.join(__dirname, 'vendor', 'tailscale', plat, process.arch);
+  },
   dbg,
 });
-tunnelManager.on('status', (s) => {
-  dbg(`tunnel-manager status=${s.status} ${s.error ? '(' + s.error + ')' : ''}`);
+meshManager.on('status', (s) => {
+  dbg(`mesh-manager status=${s.status} ${s.error ? '(' + s.error + ')' : ''}`);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('tunnel:status', s);
   }
 });
-ipcMain.handle('tunnel:getStatus', () => tunnelManager.status());
+ipcMain.handle('tunnel:getStatus', () => meshManager.status());
 
 // â”€â”€ Connect window â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -651,7 +662,7 @@ function handleDeepLink(url) {
   createMainWindow(workspaceUrl);
   // Kick off the tunnel if we have everything we need.
   if (desktopToken || readConfig().desktopToken) {
-    tunnelManager.start();
+    meshManager.start();
   }
 }
 
@@ -662,10 +673,10 @@ function handleDeepLink(url) {
 // (via the app:disconnect IPC).
 
 function disconnectWorkspace() {
-  // Phase 6 — kill the tunnel + drop the bearer token before we wipe the
+  // Phase 6 — kill the mesh + drop the bearer token before we wipe the
   // workspace URL. Otherwise the next launch would try to spin a tunnel
   // against the prior user's EC2 with their (no-longer-valid) token.
-  void tunnelManager.stop();
+  void meshManager.stop();
   clearConfig();
   if (mainWindow) { mainWindow.close(); }
   createConnectWindow();
@@ -815,7 +826,7 @@ app.whenReady().then(() => {
     // Phase 6 — restored session: re-open the tunnel automatically. If the
     // token has expired the manager will emit a `token-expired` event and
     // fall idle until the user re-signs-in.
-    if (desktopToken) tunnelManager.start();
+    if (desktopToken) meshManager.start();
   } else {
     createConnectWindow();
   }
@@ -832,7 +843,7 @@ app.whenReady().then(() => {
   // is set up. Failure is logged but non-fatal: the workspace still works
   // without the MCP endpoint.
   if (mcpEnabled) {
-    mcpServer.start({ mcpPort, cdpPort, dbg })
+    mcpServer.start({ mcpPort, cdpPort, dbg, outputDir: path.join(app.getPath('userData'), 'playwright-mcp') })
       .catch((err) => dbg('mcp-server start failed: ' + (err?.stack ?? err)));
   }
 });
@@ -841,7 +852,7 @@ app.on('window-all-closed', async () => {
   // Drop every WebContentsView so we don't leak page targets past shutdown.
   await visualEdit.destroyAll().catch(() => {});
   tabManager.destroyAll();
-  await tunnelManager.stop().catch(() => {});
+  await meshManager.stop().catch(() => {});
   if (mcpEnabled) await mcpServer.stop({ dbg }).catch(() => {});
   if (process.platform !== 'darwin') app.quit();
 });

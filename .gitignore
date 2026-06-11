@@ -29,6 +29,10 @@ yarn-error.log*
 .electron/
 .electron-builder/
 
+# Bundled Tailscale binaries (dropped in per release; see vendor/tailscale/README.md)
+vendor/tailscale/**
+!vendor/tailscale/README.md
+
 # Environment / secrets
 .env
 .env.local
