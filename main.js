@@ -440,11 +440,13 @@ function closeSplashWindow() {
   splashWindow = null;
 }
 
-// Animated logout: power-down splash, then tear down the session.
+// Animated logout: power-down splash, then tear down the session. The delay
+// is deliberately long (~3.2s) so the shutdown animation is clearly visible
+// rather than the session vanishing instantly.
 function logoutWithAnimation() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     showSplashWindow(mainWindow.getBounds(), 'shutdown');
-    setTimeout(() => { disconnectWorkspace(); closeSplashWindow(); }, 1400);
+    setTimeout(() => { disconnectWorkspace(); closeSplashWindow(); }, 3200);
   } else {
     disconnectWorkspace();
   }
