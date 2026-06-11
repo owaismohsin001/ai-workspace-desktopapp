@@ -55,3 +55,7 @@ Desktop.ini
 *.swp
 *.swo
 *~
+
+# Runtime/debug artifacts
+.playwright-mcp/
+Capture.PNG
