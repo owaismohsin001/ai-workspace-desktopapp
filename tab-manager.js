@@ -151,29 +151,52 @@ class TabManager {
     const wc = view.webContents;
     this._wireEvents(tabId, view);
 
-    // Window-open policy: payment/OAuth hosts → standalone BrowserWindow;
-    // everything else → the renderer's open-tab IPC so it becomes a workspace
-    // tab. Mirrors the previous main-window popup policy.
+    // Window-open policy — same as the main window's (main.js). window.open()
+    // must return a real window handle: returning {action:'deny'} makes it
+    // return null, and apps running in the tab (Odoo, OnlyOffice, …) then show
+    // "A popup window has been blocked" — even when we did open a workspace
+    // tab for the URL, and always for the window.open('') + set-location-later
+    // pattern those apps use. So allow everything (hidden), then route the
+    // popup's real URL in did-create-window below.
     wc.setWindowOpenHandler(({ url: openUrl }) => {
-      if (!openUrl || /^(about|chrome|devtools):/.test(openUrl)) {
+      if (/^(chrome|devtools):/.test(openUrl || '')) {
         return { action: 'deny' };
       }
-      if (isPaymentUrl(openUrl)) {
-        return {
-          action: 'allow',
-          overrideBrowserWindowOptions: {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          show: false,
+          webPreferences: { nodeIntegration: false, contextIsolation: true },
+        },
+      };
+    });
+
+    // Every popup starts hidden. Once it navigates to a real URL, route it:
+    // payment/OAuth hosts → standalone BrowserWindow (they refuse to run
+    // embedded); everything else → workspace tab via the renderer's open-tab
+    // IPC. about:blank is left alone — the opener will set its location.
+    wc.on('did-create-window', (newWin) => {
+      const route = (event, url) => {
+        if (!url || url === 'about:blank') return;
+        if (event?.preventDefault) event.preventDefault();
+        this.dbg(`tab popup route tabId=${tabId} url=${url}`);
+        setImmediate(() => { if (!newWin.isDestroyed()) newWin.close(); });
+        if (isPaymentUrl(url)) {
+          const payWin = new BrowserWindow({
             width: 560, height: 780,
             webPreferences: { nodeIntegration: false, contextIsolation: true },
-          },
-        };
-      }
-      // Forward to renderer; main window catches it and creates a tab.
-      const owner = this.getOwnerWindow();
-      if (owner && !owner.isDestroyed()) {
-        const label = (() => { try { return new URL(openUrl).hostname || openUrl; } catch { return openUrl; } })();
-        owner.webContents.send('open-tab', { url: openUrl, label });
-      }
-      return { action: 'deny' };
+          });
+          payWin.loadURL(url);
+          return;
+        }
+        const owner = this.getOwnerWindow();
+        if (owner && !owner.isDestroyed()) {
+          const label = (() => { try { return new URL(url).hostname || url; } catch { return url; } })();
+          owner.webContents.send('open-tab', { url, label });
+        }
+      };
+      newWin.webContents.on('will-navigate', (event, url) => route(event, url));
+      newWin.webContents.once('did-navigate', (_e, url) => route(null, url));
     });
 
     // Cross-site navigation guard. Any attempt to send THIS tab to a different
