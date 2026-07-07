@@ -61,6 +61,8 @@ contextBridge.exposeInMainWorld('__AIIDE__', {
     close: (tabId) => ipcRenderer.invoke('tab:close', { tabId }),
     navigate: (tabId, url) => ipcRenderer.invoke('tab:navigate', { tabId, url }),
     reload: (tabId) => ipcRenderer.invoke('tab:reload', { tabId }),
+    goBack: (tabId) => ipcRenderer.invoke('tab:goBack', { tabId }),
+    goForward: (tabId) => ipcRenderer.invoke('tab:goForward', { tabId }),
     setVisible: (tabId, visible) =>
       ipcRenderer.invoke('tab:setVisible', { tabId, visible }),
     setBounds: (tabId, rect) =>

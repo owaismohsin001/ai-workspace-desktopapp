@@ -113,6 +113,8 @@ class TabManager {
     ipcMain.handle('tab:close', (_e, { tabId }) => this._destroy(tabId));
     ipcMain.handle('tab:navigate', (_e, { tabId, url }) => this._navigate(tabId, url));
     ipcMain.handle('tab:reload', (_e, { tabId }) => this._reload(tabId));
+    ipcMain.handle('tab:goBack', (_e, { tabId }) => this._goBack(tabId));
+    ipcMain.handle('tab:goForward', (_e, { tabId }) => this._goForward(tabId));
     ipcMain.handle('tab:setVisible', (_e, { tabId, visible }) => this._setVisible(tabId, visible));
     ipcMain.handle('tab:setBounds', (_e, { tabId, rect }) => this._setBounds(tabId, rect));
     ipcMain.handle('tab:capture', (_e, { tabId }) => this._capture(tabId));
@@ -234,6 +236,24 @@ class TabManager {
     const entry = this.tabs.get(tabId);
     if (!entry) return;
     entry.view.webContents.reload();
+  }
+
+  _goBack(tabId) {
+    const entry = this.tabs.get(tabId);
+    if (!entry) return;
+    const wc = entry.view.webContents;
+    if (wc.navigationHistory ? wc.navigationHistory.canGoBack() : wc.canGoBack()) {
+      wc.navigationHistory ? wc.navigationHistory.goBack() : wc.goBack();
+    }
+  }
+
+  _goForward(tabId) {
+    const entry = this.tabs.get(tabId);
+    if (!entry) return;
+    const wc = entry.view.webContents;
+    if (wc.navigationHistory ? wc.navigationHistory.canGoForward() : wc.canGoForward()) {
+      wc.navigationHistory ? wc.navigationHistory.goForward() : wc.goForward();
+    }
   }
 
   _setVisible(tabId, visible) {

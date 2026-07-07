@@ -161,7 +161,42 @@
     </div>
 
     <h1>Connect Your Workspace</h1>
-    <p class="sub">Sign in with the platform to link your workspace.</p>
+    <p class="sub">Sign in with your workspace URL and account.</p>
+
+    <!-- ── Enterprise sign-in ── -->
+    <div class="platform-section">
+      <input
+        id="entUrl"
+        class="platform-url-input"
+        type="text"
+        placeholder="maesproject.com"
+        spellcheck="false"
+        autocapitalize="none"
+      />
+      <input
+        id="entUser"
+        class="platform-url-input"
+        type="text"
+        placeholder="Username"
+        spellcheck="false"
+        autocapitalize="none"
+      />
+      <input
+        id="entPass"
+        class="platform-url-input"
+        type="password"
+        placeholder="Password"
+      />
+      <button id="entBtn" class="btn btn-primary" type="button">
+        Sign in with Enterprise
+      </button>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:10px;margin:18px 0;color:var(--muted);font-size:12px;">
+      <div style="flex:1;height:1px;background:var(--border);"></div>
+      or
+      <div style="flex:1;height:1px;background:var(--border);"></div>
+    </div>
 
     <!-- ── Platform sign-in ── -->
     <div class="platform-section">
@@ -174,7 +209,7 @@
           spellcheck="false"
         />
       </div>
-      <button id="signInBtn" class="btn btn-primary" type="button">
+      <button id="signInBtn" class="btn btn-primary" type="button" style="background:#333;">
         Sign in with Platform
       </button>
     </div>
@@ -226,6 +261,39 @@
     platformInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') signInBtn.click();
     });
+
+    // ── Enterprise sign-in ──
+    const entBtn = document.getElementById('entBtn');
+    const entUrl = document.getElementById('entUrl');
+    const entUser = document.getElementById('entUser');
+    const entPass = document.getElementById('entPass');
+
+    entBtn.addEventListener('click', async () => {
+      const url = entUrl.value.trim();
+      const login = entUser.value.trim();
+      const password = entPass.value;
+      if (!url || !login || !password) {
+        showMsg('Enter URL, username and password.', 'error');
+        return;
+      }
+      clearMsg();
+      entBtn.disabled = true;
+      entBtn.innerHTML = '<span class="spinner"></span> Signing in…';
+
+      const result = await connect.connectEnterprise({ url, login, password });
+
+      entBtn.disabled = false;
+      entBtn.textContent = 'Sign in with Enterprise';
+      if (result && result.error) {
+        showMsg(result.error, 'error');
+      }
+      // On success the main process closes this window and opens the workspace.
+    });
+
+    // Enter key advances through the enterprise fields / submits.
+    entUrl.addEventListener('keydown', (e) => { if (e.key === 'Enter') entUser.focus(); });
+    entUser.addEventListener('keydown', (e) => { if (e.key === 'Enter') entPass.focus(); });
+    entPass.addEventListener('keydown', (e) => { if (e.key === 'Enter') entBtn.click(); });
   </script>
 </body>
 </html>

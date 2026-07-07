@@ -313,10 +313,46 @@ class MeshManager extends EventEmitter {
   _bins() {
     const dir = this.getBinDir();
     const exe = IS_WIN ? '.exe' : '';
-    return {
+    const bins = {
       tailscale: path.join(dir, `tailscale${exe}`),
       tailscaled: path.join(dir, `tailscaled${exe}`),
     };
+    if (!IS_WIN) {
+      bins.tailscale = this._executable(bins.tailscale);
+      bins.tailscaled = this._executable(bins.tailscaled);
+    }
+    return bins;
+  }
+
+  /**
+   * Packages built on Windows lose the posix exec bit, and the packaged
+   * resources dir may not be chmod-able in place (read-only AppImage mount,
+   * root-owned /opt for deb). If the bundled binary isn't executable, stage a
+   * copy in the writable state dir and run it from there.
+   */
+  _executable(bin) {
+    try {
+      fs.accessSync(bin, fs.constants.X_OK);
+      return bin;
+    } catch { /* not executable (or missing) — try the staged copy */ }
+    const staged = path.join(this._stateDir(), path.basename(bin));
+    try {
+      const src = fs.statSync(bin);
+      let stale = true;
+      try {
+        const dst = fs.statSync(staged);
+        stale = dst.size !== src.size || dst.mtimeMs < src.mtimeMs;
+      } catch { /* no staged copy yet */ }
+      if (stale) {
+        fs.mkdirSync(this._stateDir(), { recursive: true });
+        fs.copyFileSync(bin, staged);
+      }
+      fs.chmodSync(staged, 0o755);
+      return staged;
+    } catch (e) {
+      this.dbg(`mesh: cannot stage executable copy of ${bin}: ${e.message}`);
+      return bin;
+    }
   }
 
   /** Run a `tailscale` CLI subcommand synchronously. */

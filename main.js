@@ -414,10 +414,21 @@ function createConnectWindow() {
 // plays a power-down animation so the shutdown is obvious).
 
 let splashWindow = null;
+let splashFallbackTimer = null;
 
-function showSplashWindow(bounds, mode) {
+function showSplashWindow(bounds, mode, onShown) {
+  // Fire onShown exactly once, the moment the splash is actually on screen,
+  // so the caller can close the connect window with no flash-of-empty-desktop
+  // in between. A short belt-timer guarantees it runs even if ready-to-show
+  // is slow, so the connect window is never stranded.
+  let shownFired = false;
+  const fireShown = () => {
+    if (shownFired) return;
+    shownFired = true;
+    if (typeof onShown === 'function') { try { onShown(); } catch {} }
+  };
   try {
-    if (splashWindow && !splashWindow.isDestroyed()) { return; }
+    if (splashWindow && !splashWindow.isDestroyed()) { fireShown(); return; }
     const b = bounds || {};
     splashWindow = new BrowserWindow({
       x: b.x, y: b.y,
@@ -439,12 +450,35 @@ function showSplashWindow(bounds, mode) {
       mode === 'shutdown' ? { search: 'mode=shutdown' } : undefined);
     splashWindow.once('ready-to-show', () => {
       if (splashWindow && !splashWindow.isDestroyed()) splashWindow.showInactive();
+      fireShown();
     });
+    setTimeout(fireShown, 600);
     splashWindow.on('closed', () => { splashWindow = null; });
-  } catch (e) { dbg('showSplashWindow failed: ' + e.message); }
+
+    // Safety net — the splash is frameless, always-on-top and covers the
+    // whole window, so if it is ever left up it makes the app look frozen
+    // and unclosable. The shell-ready signal normally drops it, but on a
+    // reload of a slow/offline/changed workspace the poller can give up
+    // (or never match its selectors) and there was no fallback on that
+    // path. Arm a hard timeout here so EVERY splash self-heals: force it
+    // down and reveal the main window no matter who opened it. shutdown
+    // splashes are closed explicitly by logoutWithAnimation, so skip them.
+    clearTimeout(splashFallbackTimer);
+    splashFallbackTimer = null;
+    if (mode !== 'shutdown') {
+      splashFallbackTimer = setTimeout(() => {
+        dbg('splash hard-fallback fired — dropping stuck loading splash');
+        closeSplashWindow();
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+          mainWindow.show();
+        }
+      }, 20000);
+    }
+  } catch (e) { dbg('showSplashWindow failed: ' + e.message); fireShown(); }
 }
 
 function closeSplashWindow() {
+  if (splashFallbackTimer) { clearTimeout(splashFallbackTimer); splashFallbackTimer = null; }
   if (splashWindow && !splashWindow.isDestroyed()) {
     try { splashWindow.close(); } catch { /* already gone */ }
   }
@@ -506,6 +540,19 @@ function createMainWindow(workspaceUrl) {
     }
   });
 
+  // If a (re)load of the workspace actually fails — offline remote, DNS,
+  // a 5xx, an aborted reload — the shell-ready signal will never fire, so
+  // without this the loading splash from did-start-navigation would sit on
+  // screen until the 20s safety net. Drop it immediately on a real main-
+  // frame failure and reveal the window so the app stays usable. errorCode
+  // -3 (ABORTED) is a superseded navigation, not a failure — ignore it.
+  mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDesc, _url, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3) return;
+    dbg('main did-fail-load ' + errorCode + ' ' + errorDesc + ' — dropping splash');
+    closeSplashWindow();
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) mainWindow.show();
+  });
+
   // Hijack guard. The main window hosts the workspace shell and must NEVER be
   // navigated away from the workspace origin. A link/button inside the page
   // that targets the top frame (instead of window.open, which the handler
@@ -555,7 +602,11 @@ function createMainWindow(workspaceUrl) {
   // — only our bot. ready-to-show fires at first paint (= that text), so we
   // deliberately do NOT reveal the main window there; the global
   // 'workspace:shell-ready' handler (registered once below) does.
-  showSplashWindow(mainWindow.getBounds());
+  // Show the splash first, and only close the connect window once the splash
+  // is actually painted over the same spot — no flash-of-empty-desktop.
+  showSplashWindow(mainWindow.getBounds(), undefined, () => {
+    if (connectWindow && !connectWindow.isDestroyed()) connectWindow.close();
+  });
   mainWindow.loadURL(workspaceUrl);
   setTimeout(() => { // hard fallback if the shell never signals ready
     closeSplashWindow();
@@ -656,9 +707,8 @@ function handleDeepLink(url) {
     ...(platformUrl ? { platformUrl } : {}),
   });
 
-  if (connectWindow) {
-    connectWindow.close();   // triggers the 'closed' handler which nulls it
-  }
+  // createMainWindow shows the splash and closes the connect window once the
+  // splash is painted (no empty-desktop flash).
   createMainWindow(workspaceUrl);
   // Kick off the tunnel if we have everything we need.
   if (desktopToken || readConfig().desktopToken) {
@@ -688,8 +738,12 @@ ipcMain.handle('app:disconnect', () => { logoutWithAnimation(); });
 // the loading splash and reveal the main window (first load) — on reloads
 // the main window is already visible, so this just drops the splash.
 ipcMain.on('workspace:shell-ready', () => {
-  closeSplashWindow();
+  // Reveal the workspace FIRST, then drop the splash on the next tick — this
+  // ordering guarantees no 1-frame gap where neither window is painted (which
+  // read as a flicker). The splash sits on top, so showing the main window
+  // behind it is invisible until we close it.
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) mainWindow.show();
+  setTimeout(closeSplashWindow, 90);
 });
 
 // â”€â”€ Application menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -763,9 +817,47 @@ ipcMain.handle('connect-manual', (_, workspaceUrl) => {
     return { error: 'Enter a valid http:// or https:// URL.' };
   }
   writeConfig({ workspaceUrl, connectedAt: new Date().toISOString() });
-  if (connectWindow) { connectWindow.close(); }
+  // createMainWindow closes the connect window once the splash is painted.
   createMainWindow(workspaceUrl);
   return { ok: true };
+});
+
+// Connect window: "Sign in with Enterprise" — workspace URL + username +
+// password verified against the workspace's own /api/auth/login (which
+// checks the fixed workspace user or any Odoo user of that deployment).
+// On success the session JWT is persisted and handed to the workspace UI
+// via a one-shot ?desktopToken= query param.
+ipcMain.handle('connect-enterprise', async (_, { url, login, password }) => {
+  let base = (url || '').trim();
+  if (!base) return { error: 'Enter the workspace URL.' };
+  if (!/^https?:\/\//.test(base)) base = `https://${base}`;
+  base = base.replace(/\/+$/, '');
+  if (!login || !password) return { error: 'Enter username and password.' };
+
+  let res, data;
+  try {
+    res = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login, password }),
+    });
+    data = await res.json().catch(() => ({}));
+  } catch {
+    return { error: `Could not reach ${base} — check the URL.` };
+  }
+  if (!res.ok || !data.token) {
+    return { error: data.error || `Login failed (HTTP ${res.status}).` };
+  }
+
+  writeConfig({
+    workspaceUrl: base,
+    enterpriseToken: data.token,
+    enterpriseUser: (data.user && data.user.login) || login,
+    connectedAt: new Date().toISOString(),
+  });
+  // createMainWindow closes the connect window once the splash is painted.
+  createMainWindow(`${base}/?desktopToken=${encodeURIComponent(data.token)}`);
+  return { ok: true, user: data.user };
 });
 
 // Expose the configured PLATFORM_URL so connect.html can pre-fill it.
@@ -820,9 +912,15 @@ app.whenReady().then(() => {
     return;
   }
 
-  const { workspaceUrl, desktopToken } = readConfig();
+  const { workspaceUrl, desktopToken, enterpriseToken } = readConfig();
   if (workspaceUrl) {
-    createMainWindow(workspaceUrl);
+    // Enterprise sessions re-attach their JWT so the workspace UI's auth
+    // gate signs the window in silently on restore.
+    createMainWindow(
+      enterpriseToken
+        ? `${workspaceUrl}/?desktopToken=${encodeURIComponent(enterpriseToken)}`
+        : workspaceUrl
+    );
     // Phase 6 — restored session: re-open the tunnel automatically. If the
     // token has expired the manager will emit a `token-expired` event and
     // fall idle until the user re-signs-in.

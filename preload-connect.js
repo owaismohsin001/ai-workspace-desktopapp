@@ -13,6 +13,10 @@ contextBridge.exposeInMainWorld('__AIIDE_CONNECT__', {
   connectManual: (workspaceUrl) =>
     ipcRenderer.invoke('connect-manual', workspaceUrl),
 
+  /** Enterprise sign-in: workspace URL + username + password. */
+  connectEnterprise: (payload) =>
+    ipcRenderer.invoke('connect-enterprise', payload),
+
   /** Fetch initial config (platformUrl) from the main process. */
   getConfig: () => ipcRenderer.invoke('get-config'),
 });
