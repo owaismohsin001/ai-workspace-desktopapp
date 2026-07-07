@@ -573,7 +573,7 @@ function createMainWindow(workspaceUrl) {
     event.preventDefault();
     dbg('will-navigate blocked top-level main-window nav to ' + url + ' — routing to tab');
     const label = (() => { try { return new URL(url).hostname || url; } catch { return url; } })();
-    mainWindow.webContents.send('open-tab', { url, label });
+    mainWindow.webContents.send('open-tab', { url, label, exact: true });
   });
 
   // Force our chrome theme onto the remotely-served workspace UI: themed
@@ -659,9 +659,11 @@ function createMainWindow(workspaceUrl) {
         });
         payWin.loadURL(url);
       } else {
-        // Regular popup → workspace tab
+        // Regular popup → workspace tab. exact — a popup names a specific
+        // document; the renderer must not dedupe it against a same-origin
+        // tab sitting at a different path.
         const label = (() => { try { return new URL(url).hostname || url; } catch { return url; } })();
-        mainWindow?.webContents.send('open-tab', { url, label });
+        mainWindow?.webContents.send('open-tab', { url, label, exact: true });
       }
     };
 

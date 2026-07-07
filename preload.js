@@ -139,8 +139,11 @@ contextBridge.exposeInMainWorld('__AIIDE__', {
   },
 });
 
-ipcRenderer.on('open-tab', (_event, { url, label }) => {
-  for (const cb of openTabListeners) { try { cb(url, label || url); } catch {} }
+ipcRenderer.on('open-tab', (_event, { url, label, exact }) => {
+  // exact: the URL is a specific document the user must SEE (popup / blocked
+  // navigation) — the renderer matches existing tabs by full URL instead of
+  // origin, so a same-origin tab at another path doesn't swallow the open.
+  for (const cb of openTabListeners) { try { cb(url, label || url, !!exact); } catch {} }
 });
 ipcRenderer.on('tab:loading-change', (_event, { tabId, loading }) => {
   for (const cb of tabLoadingListeners) { try { cb(tabId, loading); } catch {} }

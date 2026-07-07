@@ -192,7 +192,10 @@ class TabManager {
         const owner = this.getOwnerWindow();
         if (owner && !owner.isDestroyed()) {
           const label = (() => { try { return new URL(url).hostname || url; } catch { return url; } })();
-          owner.webContents.send('open-tab', { url, label });
+          // exact — a popup names a specific document (e.g. Odoo's sign
+          // window); the renderer must not dedupe it against a same-origin
+          // tab at a different path.
+          owner.webContents.send('open-tab', { url, label, exact: true });
         }
       };
       newWin.webContents.on('will-navigate', (event, url) => route(event, url));
@@ -217,7 +220,10 @@ class TabManager {
       e.preventDefault();
       const owner = this.getOwnerWindow();
       if (owner && !owner.isDestroyed()) {
-        owner.webContents.send('open-tab', { url: targetUrl, label: tgt.hostname });
+        // exact — the user clicked a link to a specific page; focusing an
+        // existing tab of that site at some other path would look like the
+        // click did nothing.
+        owner.webContents.send('open-tab', { url: targetUrl, label: tgt.hostname, exact: true });
       }
       this.dbg(`will-navigate: blocked cross-site ${cur.host} -> ${tgt.host}; opened new tab`);
     });
