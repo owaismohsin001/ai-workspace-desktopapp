@@ -176,9 +176,15 @@ class TabManager {
     // embedded); everything else → workspace tab via the renderer's open-tab
     // IPC. about:blank is left alone — the opener will set its location.
     wc.on('did-create-window', (newWin) => {
+      // Route exactly once per popup. Both will-navigate and did-navigate can
+      // fire for the same load (and servers redirect — e.g. Odoo bouncing
+      // /odoo/... to /my), which routed the same popup into two tabs.
+      let routed = false;
       const route = (event, url) => {
         if (!url || url === 'about:blank') return;
         if (event?.preventDefault) event.preventDefault();
+        if (routed) return;
+        routed = true;
         this.dbg(`tab popup route tabId=${tabId} url=${url}`);
         setImmediate(() => { if (!newWin.isDestroyed()) newWin.close(); });
         if (isPaymentUrl(url)) {

@@ -642,9 +642,15 @@ function createMainWindow(workspaceUrl) {
   // detect and refuse iframe embedding even with headers stripped); everything
   // else → workspace tab via IPC.
   mainWindow.webContents.on('did-create-window', (newWin) => {
+    // Route exactly once per popup — will-navigate and did-navigate can both
+    // fire for the same load (plus server redirects), which would open the
+    // same popup as two tabs now that opens are exact-matched.
+    let routed = false;
     const route = (event, url) => {
-      if (url === 'about:blank') return;
+      if (!url || url === 'about:blank') return;
       if (event?.preventDefault) event.preventDefault();
+      if (routed) return;
+      routed = true;
       dbg('did-create-window route url=' + url);
       setImmediate(() => { if (!newWin.isDestroyed()) newWin.close(); });
 
